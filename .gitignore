@@ -1,29 +1,31 @@
 # Node.js dependencies
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+/node_modules/
+/npm-debug.log*
+/yarn-debug.log*
+/yarn-error.log*
 
 # Environment variables
-.env
-.env.local
-.env.*.local
+/.env
+/.env.local
+/.env.*.local
 
 # Logs
-logs/
-*.log
-scripts
-uploads
-tests
-TESTING-GUIDE.md
+/logs/
+/*.log
+
+# Custom ignored folders/files (root level only)
+/scripts/
+/tests/
+/TESTING-GUIDE.md
+/uploads/
 
 # OS generated files
 .DS_Store
 Thumbs.db
 
 # Build output
-dist/
-build/
+/dist/
+/build/
 
 # IDE files
 .vscode/
@@ -34,4 +36,4 @@ build/
 *.sln
 
 # Coverage directory
-coverage/
+/coverage/
