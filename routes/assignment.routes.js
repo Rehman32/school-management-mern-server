@@ -1,14 +1,32 @@
-// server/routes/assignment.routes.js
+// ============================================
+// TEACHER ASSIGNMENT ROUTES
+// ============================================
+
 const express = require("express");
 const router = express.Router();
-const { authGuard, requireRole, protect, authorize } = require("../middlewares/auth.middleware");
-const assignmentCtrl = require("../controllers/assignment.controller");
+const assignCtrl = require("../controllers/assignment.controller.js");
+const { protect, authorize } = require("../middlewares/auth.middleware");
 
-router.use(protect, authorize("admin")); // admin-only for now
+router.use(protect);
+router.use(authorize("admin"));
 
-router.post("/", assignmentCtrl.createAssignment);
-router.get("/", assignmentCtrl.listAssignments);
-router.get("/class/:classId", assignmentCtrl.getAssignmentsByClass);
-router.delete("/:id", assignmentCtrl.deleteAssignment);
+// List & Query
+router.get("/", assignCtrl.getAllAssignments);
+router.get("/teacher/:teacherId", assignCtrl.getAssignmentsByTeacher);
+router.get("/class/:classId", assignCtrl.getAssignmentsByClass);
+router.get("/subject/:subjectId", assignCtrl.getAssignmentsBySubject);
+
+// Timetables
+router.get("/timetable/class/:classId", assignCtrl.getClassTimetable);
+router.get("/timetable/teacher/:teacherId", assignCtrl.getTeacherTimetable);
+
+// Reports
+router.get("/workload", assignCtrl.getWorkloadSummary);
+
+// Operations
+router.post("/", assignCtrl.createOrUpdateAssignment);
+router.delete("/teacher/:teacherId/assignment/:assignmentId", assignCtrl.removeAssignment);
+router.get("/check-conflict", assignCtrl.checkConflict);
+router.post("/bulk-assign", assignCtrl.bulkAssign);
 
 module.exports = router;

@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const path = require('path');
 
+const dashboardRoutes = require('./routes/admindashboard.routes');
 const authRoutes = require('./routes/auth.routes');
 const schoolRoutes = require('./routes/school.routes');
 const classRoutes = require('./routes/class.routes');
@@ -31,6 +32,7 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ✅ Register all your routes properly
 app.use('/api/auth', authRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/school', schoolRoutes);
 app.use('/api/classes', classRoutes);
 app.use('/api/students', studentRoutes);

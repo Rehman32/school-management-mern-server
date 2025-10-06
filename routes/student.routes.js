@@ -1,24 +1,74 @@
-// routes/student.routes.js
 
 const express = require('express');
 const router = express.Router();
 const studentController = require('../controllers/student.controller');
 const { protect, authorize } = require('../middlewares/auth.middleware');
 
+// Protect all routes
 router.use(protect);
-router.use(authorize('admin'));
 
-router.route('/getAllStudents')
-.get(studentController.getAllStudents);
-router.route('/createStudent')
-.post(studentController.createStudent);
+// ============================================
+// STUDENT CRUD OPERATIONS
+// ============================================
 
-router.route('/getStudentById/:id')
-.get(studentController.getStudentById);
-router.route('/updateStudent/:id')
-.put(studentController.updateStudent);
-router.route('/deleteStudent/:id')
-.delete(studentController.deleteStudent);
+// Get all students (with pagination, search, filters)
+router.get(
+  '/getAllStudents',
+  authorize('admin', 'teacher'),
+  studentController.getAllStudents
+);
 
-module.exports = router ;
+// Get statistics
+router.get(
+  '/statistics',
+  authorize('admin'),
+  studentController.getStatistics
+);
 
+// Get student by ID
+router.get(
+  '/getStudentById/:id',
+  authorize('admin', 'teacher'),
+  studentController.getStudentById
+);
+
+// Create student
+router.post(
+  '/createStudent',
+  authorize('admin'),
+  studentController.createStudent
+);
+
+// Update student
+router.put(
+  '/updateStudent/:id',
+  authorize('admin'),
+  studentController.updateStudent
+);
+
+// Delete student
+router.delete(
+  '/deleteStudent/:id',
+  authorize('admin'),
+  studentController.deleteStudent
+);
+
+// ============================================
+// BULK OPERATIONS
+// ============================================
+
+// Bulk promote students
+router.post(
+  '/bulk-promote',
+  authorize('admin'),
+  studentController.bulkPromote
+);
+
+// Bulk delete students
+router.post(
+  '/bulk-delete',
+  authorize('admin'),
+  studentController.bulkDelete
+);
+
+module.exports = router;

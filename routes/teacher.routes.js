@@ -1,29 +1,84 @@
-const express = require('express');
+// teacher.routes.js
+// ============================================
+
+const express = require("express");
 const router = express.Router();
-const ctrl = require('../controllers/teacher.controller');
-const { validate } = require('../middlewares/validate.middleware');
-const { createTeacherSchema, updateTeacherSchema } = require('../validators/teacher.validator');
-const { protect, authorize } = require('../middlewares/auth.middleware');
-const TeacherAssignment = require("../models/teacherAssignment.model");
+const teacherCtrl = require("../controllers/teacher.controller");
+const { protect, authorize } = require("../middlewares/auth.middleware");
 
-// All routes require admin role
-router.use(protect, authorize('admin'));
+// Protect all routes
+router.use(protect);
 
-// CRUD
-router.get('/', ctrl.getAllTeachers);
-router.post('/', validate(createTeacherSchema), ctrl.createTeacher);
-// add import ctrl earlier
-router.get("/minimal", protect, authorize("admin"), ctrl.getTeachersMinimal);
-router.get('/:id', ctrl.getTeacherById);
-router.put('/:id', validate(updateTeacherSchema), ctrl.updateTeacher);
-router.delete('/:id', ctrl.deleteTeacher);
+// ============================================
+// TEACHER CRUD OPERATIONS
+// ============================================
 
-// assignment endpoints
-router.post('/:teacherId/assign', ctrl.createAssignment);
-router.get('/:teacherId/assignments', ctrl.getAssignments);
-router.put('/:teacherId/assign/:assignmentId', ctrl.updateAssignment);
-router.delete('/:teacherId/assign/:assignmentId', ctrl.deleteAssignment);
+// List teachers (with advanced filtering)
+router.get(
+  "/",
+  authorize("admin", "teacher"),
+  teacherCtrl.listTeachers
+);
+router.get("/minimal", protect, authorize("admin"), teacherCtrl.getTeachersMinimal);
 
+// Get statistics
+router.get(
+  "/statistics",
+  authorize("admin"),
+  teacherCtrl.getStatistics
+);
 
+// Get unique departments
+router.get(
+  "/departments",
+  authorize("admin"),
+  teacherCtrl.getDepartments
+);
+
+// Get teacher by ID
+router.get(
+  "/:id",
+  authorize("admin", "teacher"),
+  teacherCtrl.getTeacherById
+);
+
+// Create teacher
+router.post(
+  "/",
+  authorize("admin"),
+  teacherCtrl.createTeacher
+);
+
+// Update teacher
+router.put(
+  "/:id",
+  authorize("admin"),
+  teacherCtrl.updateTeacher
+);
+
+// Delete teacher (soft delete)
+router.delete(
+  "/:id",
+  authorize("admin"),
+  teacherCtrl.deleteTeacher
+);
+
+// ============================================
+// BULK OPERATIONS
+// ============================================
+
+// Bulk update status
+router.post(
+  "/bulk-update-status",
+  authorize("admin"),
+  teacherCtrl.bulkUpdateStatus
+);
+
+// Bulk delete
+router.post(
+  "/bulk-delete",
+  authorize("admin"),
+  teacherCtrl.bulkDelete
+);
 
 module.exports = router;
