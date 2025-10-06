@@ -12,6 +12,10 @@ yarn-error.log*
 # Logs
 logs/
 *.log
+scripts
+uploads
+tests
+TESTING-GUIDE.md
 
 # OS generated files
 .DS_Store
