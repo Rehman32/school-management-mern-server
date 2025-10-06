@@ -1,3 +1,5 @@
+//server/config/roles.js
+
 const ROLES = {
     ADMIN: 'admin',
     TEACHER: 'teacher',

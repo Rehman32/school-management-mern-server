@@ -1,11 +1,24 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const path = require('path');
+const cookieParser = require('cookie-parser');
 
-const dashboardRoutes = require('./routes/admindashboard.routes');
+// Load environment variables FIRST
+dotenv.config();
+
+// Import configurations
+const Database = require('./config/database');
+const SecurityConfig = require('./config/security');
+
+// Import middleware
+const ErrorHandler = require('./middlewares/errorHandler.middleware');
+const AuditMiddleware = require('./middlewares/audit.middleware');
+
+// Import routes (all your existing routes)
 const authRoutes = require('./routes/auth.routes');
+const tenantRoutes = require('./routes/tenant.routes');
+const dashboardRoutes = require('./routes/admindashboard.routes');
 const schoolRoutes = require('./routes/school.routes');
 const classRoutes = require('./routes/class.routes');
 const assignmentRoutes = require('./routes/assignment.routes');
@@ -17,21 +30,61 @@ const feeRoutes = require('./routes/fee.routes');
 const examRoutes = require('./routes/exam.routes');
 const timetableRoutes = require('./routes/timetable.routes');
 
-const { protect, authorize } = require('./middlewares/auth.middleware');
-
-dotenv.config();
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(express.json());
-app.use(cors({
-  origin: 'http://localhost:5173',
-}));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+// ============================================
+// MIDDLEWARE (CORRECT ORDER IS CRITICAL!)
+// ============================================
 
-// ✅ Register all your routes properly
+// 1. CORS (MUST BE FIRST!)
+app.use(cors(SecurityConfig.getCorsOptions()));
+
+// 2. Security headers
+SecurityConfig.applySecurityMiddleware(app);
+
+// 3. Body parsing
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// 4. Cookie parser
+app.use(cookieParser());
+
+// 5. Static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// 6. Request logging (development only)
+if (process.env.NODE_ENV === 'development') {
+  app.use(AuditMiddleware.logRequest);
+}
+
+// ============================================
+// ROUTES
+// ============================================
+
+// Health check
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'School Management API is running',
+    version: '2.0.0',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    status: 'healthy',
+    database: Database.getConnectionStatus(),
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/tenants', tenantRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/school', schoolRoutes);
 app.use('/api/classes', classRoutes);
@@ -44,36 +97,63 @@ app.use('/api/fees', feeRoutes);
 app.use('/api/exams', examRoutes);
 app.use('/api/timetable', timetableRoutes);
 
-// (optional) Remove this — it's redundant unless ./routes/index.js combines all routes
-// app.use('/api/v1', require('./routes'));
-
-// Default routes
-app.get('/', (req, res) => {
-  res.send('School Management Backend is running...');
-});
-
+// OLD ROUTES (Backward compatibility)
+const { protect } = require('./middlewares/auth.middleware');
 app.get('/api/me', protect, (req, res) => {
   res.json({ user: req.user, msg: `You are logged in as a ${req.user.role}` });
 });
 
-app.get('/api/admin', protect, authorize('admin'), (req, res) => {
-  res.json({ msg: 'Welcome, Admin! This is a protected resource.' });
+// ============================================
+// ERROR HANDLING
+// ============================================
+
+// 404 Handler
+app.use(ErrorHandler.notFound);
+
+// Global Error Handler
+app.use(ErrorHandler.handle);
+
+// ============================================
+// DATABASE & SERVER START
+// ============================================
+
+const startServer = async () => {
+  try {
+    // Connect to database
+    await Database.connect();
+
+    // Start server
+    app.listen(PORT, () => {
+      console.log('');
+      console.log('🚀 ========================================');
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🚀 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🚀 API Base URL: http://localhost:${PORT}/api`);
+      console.log(`🚀 CORS Origin: ${process.env.CORS_ORIGIN || 'http://localhost:5173'}`);
+      console.log('🚀 ========================================');
+      console.log('');
+    });
+  } catch (error) {
+    console.error('❌ Server startup failed:', error);
+    process.exit(1);
+  }
+};
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err) => {
+  console.error('❌ Unhandled Promise Rejection:', err);
+  console.log('⚠️  Shutting down server...');
+  process.exit(1);
 });
 
-app.get('/api/student', protect, authorize('student'), (req, res) => {
-  res.json({ msg: 'Welcome, Student! This is a protected resource.' });
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  console.log('⚠️  Shutting down server...');
+  process.exit(1);
 });
 
-app.get('/api/teacher', protect, authorize('teacher'), (req, res) => {
-  res.json({ msg: 'Welcome, Teacher! This is a protected resource.' });
-});
+// Start the server
+startServer();
 
-// Mongo connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("Mongo DB connected Successfully"))
-  .catch(err => console.log("Mongo DB connection error", err));
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+module.exports = app;
