@@ -1,12 +1,17 @@
+// ============================================
+// STUDENT CONTROLLER - MULTI-TENANT
+// Professional Production-Ready Version
+// ============================================
 
 const Student = require("../models/student.model");
 const Class = require("../models/class.model");
+const mongoose = require("mongoose");
 
 // ============================================
 // HELPER: Validate Required Fields
 // ============================================
 const validateStudent = (data) => {
-  const required = ["fullName", "gender", "dob", "class"];
+  const required = ["fullName", "gender", "dob", "class", "rollNumber"];
   const missing = required.filter(field => !data[field]);
   
   if (missing.length > 0) {
@@ -32,7 +37,16 @@ const validateStudent = (data) => {
 // ============================================
 exports.getAllStudents = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    // Get tenantId from authenticated user
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const {
       page = 1,
       limit = 20,
@@ -45,7 +59,10 @@ exports.getAllStudents = async (req, res) => {
     } = req.query;
     
     // Build query
-    const query = { schoolId };
+    const query = { 
+      tenantId,
+      isDeleted: false
+    };
     
     if (status && status !== "all") query.status = status;
     if (classId) query.class = classId;
@@ -99,8 +116,15 @@ exports.getAllStudents = async (req, res) => {
 // ============================================
 exports.createStudent = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
     
     // Validate input
     const validation = validateStudent(req.body);
@@ -111,24 +135,25 @@ exports.createStudent = async (req, res) => {
       });
     }
     
-    // Validate class exists
+    // Validate class exists in this tenant
     const classExists = await Class.findOne({ 
       _id: req.body.class, 
-      schoolId 
+      tenantId
     });
     
     if (!classExists) {
       return res.status(404).json({
         success: false,
-        message: "Class not found"
+        message: "Class not found in your school"
       });
     }
     
-    // Check for duplicate admission number
+    // Check for duplicate admission number within tenant
     if (req.body.admissionNumber) {
       const existingStudent = await Student.findOne({
-        schoolId,
-        admissionNumber: req.body.admissionNumber
+        tenantId,
+        admissionNumber: req.body.admissionNumber,
+        isDeleted: false
       });
       
       if (existingStudent) {
@@ -138,11 +163,27 @@ exports.createStudent = async (req, res) => {
         });
       }
     }
+
+    // Check for duplicate roll number in same class
+    const duplicateRoll = await Student.findOne({
+      tenantId,
+      class: req.body.class,
+      rollNumber: req.body.rollNumber,
+      isDeleted: false
+    });
+
+    if (duplicateRoll) {
+      return res.status(400).json({
+        success: false,
+        message: "Roll number already exists in this class"
+      });
+    }
     
     // Create student
     const studentData = {
       ...req.body,
-      schoolId,
+      tenantId,
+      schoolId: tenantId, // Backward compatibility
       createdBy: userId,
       updatedBy: userId
     };
@@ -163,7 +204,6 @@ exports.createStudent = async (req, res) => {
     console.error("Create student error:", err);
     
     if (err.code === 11000) {
-      // Duplicate key error
       const field = Object.keys(err.keyPattern)[0];
       return res.status(400).json({
         success: false,
@@ -191,10 +231,19 @@ exports.createStudent = async (req, res) => {
 // ============================================
 exports.getStudentById = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const student = await Student.findOne({ 
       _id: req.params.id, 
-      schoolId 
+      tenantId,
+      isDeleted: false
     })
     .populate("class", "name grade section")
     .populate("createdBy updatedBy", "name email");
@@ -221,13 +270,21 @@ exports.getStudentById = async (req, res) => {
 // ============================================
 exports.updateStudent = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
     
-    // Find existing student
+    // Find existing student in this tenant
     const existing = await Student.findOne({ 
       _id: req.params.id, 
-      schoolId 
+      tenantId,
+      isDeleted: false
     });
     
     if (!existing) {
@@ -241,7 +298,7 @@ exports.updateStudent = async (req, res) => {
     if (req.body.class && req.body.class !== existing.class.toString()) {
       const classExists = await Class.findOne({ 
         _id: req.body.class, 
-        schoolId 
+        tenantId
       });
       
       if (!classExists) {
@@ -249,6 +306,24 @@ exports.updateStudent = async (req, res) => {
           success: false,
           message: "Class not found"
         });
+      }
+
+      // Check for duplicate roll number in new class
+      if (req.body.rollNumber) {
+        const duplicateRoll = await Student.findOne({
+          _id: { $ne: req.params.id },
+          tenantId,
+          class: req.body.class,
+          rollNumber: req.body.rollNumber,
+          isDeleted: false
+        });
+
+        if (duplicateRoll) {
+          return res.status(400).json({
+            success: false,
+            message: "Roll number already exists in this class"
+          });
+        }
       }
     }
     
@@ -258,7 +333,8 @@ exports.updateStudent = async (req, res) => {
       updatedBy: userId
     };
     
-    // Don't allow changing schoolId
+    // Don't allow changing tenantId or schoolId
+    delete updateData.tenantId;
     delete updateData.schoolId;
     delete updateData.createdBy;
     
@@ -300,15 +376,23 @@ exports.updateStudent = async (req, res) => {
 };
 
 // ============================================
-// DELETE STUDENT
+// DELETE STUDENT (Soft Delete)
 // ============================================
 exports.deleteStudent = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
     
-    const student = await Student.findOneAndDelete({ 
+    const student = await Student.findOne({ 
       _id: req.params.id, 
-      schoolId 
+      tenantId,
+      isDeleted: false
     });
     
     if (!student) {
@@ -317,6 +401,12 @@ exports.deleteStudent = async (req, res) => {
         message: "Student not found"
       });
     }
+
+    // Soft delete
+    student.isDeleted = true;
+    student.deletedAt = new Date();
+    student.status = "inactive";
+    await student.save();
     
     res.json({ 
       success: true, 
@@ -337,13 +427,26 @@ exports.deleteStudent = async (req, res) => {
 // ============================================
 exports.getStatistics = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
     
-    const stats = await Student.getSchoolStats(schoolId);
+    const stats = await Student.getSchoolStats(tenantId);
     
     // Get class-wise count
     const classCounts = await Student.aggregate([
-      { $match: { schoolId, status: "active" } },
+      { 
+        $match: { 
+          tenantId: new mongoose.Types.ObjectId(tenantId),
+          status: "active",
+          isDeleted: false
+        } 
+      },
       { $group: { _id: "$class", count: { $sum: 1 } } },
       { 
         $lookup: {
@@ -384,7 +487,15 @@ exports.getStatistics = async (req, res) => {
 // ============================================
 exports.bulkPromote = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { fromClass, toClass, studentIds, academicYear } = req.body;
     
     if (!fromClass || !toClass || !academicYear) {
@@ -394,10 +505,10 @@ exports.bulkPromote = async (req, res) => {
       });
     }
     
-    // Validate classes exist
+    // Validate classes exist in this tenant
     const [fromClassExists, toClassExists] = await Promise.all([
-      Class.findOne({ _id: fromClass, schoolId }),
-      Class.findOne({ _id: toClass, schoolId })
+      Class.findOne({ _id: fromClass, tenantId }),
+      Class.findOne({ _id: toClass, tenantId })
     ]);
     
     if (!fromClassExists || !toClassExists) {
@@ -409,9 +520,10 @@ exports.bulkPromote = async (req, res) => {
     
     // Build query
     const query = { 
-      schoolId, 
+      tenantId, 
       class: fromClass,
-      status: "active"
+      status: "active",
+      isDeleted: false
     };
     
     if (studentIds && studentIds.length > 0) {
@@ -449,7 +561,15 @@ exports.bulkPromote = async (req, res) => {
 // ============================================
 exports.bulkDelete = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { studentIds } = req.body;
     
     if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
@@ -459,15 +579,26 @@ exports.bulkDelete = async (req, res) => {
       });
     }
     
-    const result = await Student.deleteMany({
-      _id: { $in: studentIds },
-      schoolId
-    });
+    // Soft delete
+    const result = await Student.updateMany(
+      {
+        _id: { $in: studentIds },
+        tenantId,
+        isDeleted: false
+      },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt: new Date(),
+          status: "inactive"
+        }
+      }
+    );
     
     res.json({
       success: true,
-      message: `${result.deletedCount} students deleted successfully`,
-      count: result.deletedCount
+      message: `${result.modifiedCount} students deleted successfully`,
+      count: result.modifiedCount
     });
   } catch (err) {
     console.error("Bulk delete error:", err);

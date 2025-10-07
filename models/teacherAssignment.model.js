@@ -1,5 +1,4 @@
-//  TEACHER ASSIGNMENT MODEL
-
+//  teacherAssignment.model.js
 
 const mongoose = require("mongoose");
 

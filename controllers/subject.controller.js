@@ -1,55 +1,50 @@
-// UBJECT CONTROLLER
+// ============================================
+// SUBJECT CONTROLLER - MULTI-TENANT
+// ============================================
 
 const Subject = require("../models/subject.model");
+const Class = require("../models/class.model");
+const User = require("../models/user.model");
+const mongoose = require("mongoose");
 
 // ============================================
-// HELPER: Validate Subject Data
-// ============================================
-const validateSubject = (data) => {
-  const required = ["name", "code"];
-  const missing = required.filter(field => !data[field]);
-  
-  if (missing.length > 0) {
-    return {
-      valid: false,
-      message: `Missing required fields: ${missing.join(", ")}`
-    };
-  }
-  
-  return { valid: true };
-};
-
-// ============================================
-// LIST SUBJECTS (with pagination & filters)
+// LIST SUBJECTS
 // ============================================
 exports.listSubjects = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const {
       page = 1,
       limit = 50,
       search = "",
       category = "",
-      department = "",
+      grade = "",
+      stream = "",
       status = "active",
     } = req.query;
 
-    // Build query
     const query = {
-      schoolId,
+      tenantId,
       isDeleted: false,
     };
 
     if (status && status !== "all") query.status = status;
     if (category) query.category = category;
-    if (department) query.department = department;
+    if (grade) query.grade = grade;
+    if (stream) query.stream = stream;
 
-    // Search
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
         { code: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -57,7 +52,9 @@ exports.listSubjects = async (req, res) => {
 
     const [subjects, total] = await Promise.all([
       Subject.find(query)
-        .sort({ displayOrder: 1, name: 1 })
+        .populate("teachers", "fullName email")
+        .populate("classes", "name grade section")
+        .sort({ name: 1 })
         .skip(skip)
         .limit(parseInt(limit))
         .lean(),
@@ -88,15 +85,22 @@ exports.listSubjects = async (req, res) => {
 // ============================================
 exports.getSubjectById = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const { id } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
 
     const subject = await Subject.findOne({
-      _id: id,
-      schoolId,
+      _id: req.params.id,
+      tenantId,
       isDeleted: false,
     })
-      .populate("prerequisites", "name code")
+      .populate("teachers", "fullName email")
+      .populate("classes", "name grade section")
       .populate("createdBy updatedBy", "name email");
 
     if (!subject) {
@@ -124,28 +128,84 @@ exports.getSubjectById = async (req, res) => {
 // ============================================
 exports.createSubject = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
 
-    // Validate input
-    const validation = validateSubject(req.body);
-    if (!validation.valid) {
+    if (!tenantId) {
       return res.status(400).json({
         success: false,
-        message: validation.message
+        message: "Tenant ID is required"
       });
+    }
+
+    if (!req.body.name || !req.body.code) {
+      return res.status(400).json({
+        success: false,
+        message: "Subject name and code are required"
+      });
+    }
+
+    // Check for duplicate code
+    const duplicate = await Subject.findOne({
+      tenantId,
+      code: req.body.code.toUpperCase(),
+      isDeleted: false,
+    });
+
+    if (duplicate) {
+      return res.status(400).json({
+        success: false,
+        message: "Subject code already exists"
+      });
+    }
+
+    // Validate teachers if provided
+    if (req.body.teachers && req.body.teachers.length > 0) {
+      const teachersExist = await User.countDocuments({
+        _id: { $in: req.body.teachers },
+        tenantId,
+        role: "teacher",
+        isDeleted: false,
+      });
+
+      if (teachersExist !== req.body.teachers.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more teachers not found"
+        });
+      }
+    }
+
+    // Validate classes if provided
+    if (req.body.classes && req.body.classes.length > 0) {
+      const classesExist = await Class.countDocuments({
+        _id: { $in: req.body.classes },
+        tenantId,
+        isDeleted: false,
+      });
+
+      if (classesExist !== req.body.classes.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more classes not found"
+        });
+      }
     }
 
     // Create subject
     const subjectData = {
       ...req.body,
-      schoolId,
+      tenantId,
+      schoolId: tenantId, // Backward compatibility
       createdBy: userId,
       updatedBy: userId,
     };
 
     const newSubject = new Subject(subjectData);
     await newSubject.save();
+
+    await newSubject.populate("teachers", "fullName email");
+    await newSubject.populate("classes", "name grade section");
 
     res.status(201).json({
       success: true,
@@ -158,7 +218,7 @@ exports.createSubject = async (req, res) => {
     if (err.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "A subject with this code already exists"
+        message: "Subject code already exists"
       });
     }
 
@@ -182,14 +242,19 @@ exports.createSubject = async (req, res) => {
 // ============================================
 exports.updateSubject = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { id } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
 
-    // Find existing subject
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const existing = await Subject.findOne({
-      _id: id,
-      schoolId,
+      _id: req.params.id,
+      tenantId,
       isDeleted: false,
     });
 
@@ -200,21 +265,72 @@ exports.updateSubject = async (req, res) => {
       });
     }
 
-    // Update subject
+    // Check for duplicate code if changed
+    if (req.body.code && req.body.code.toUpperCase() !== existing.code) {
+      const duplicate = await Subject.findOne({
+        _id: { $ne: req.params.id },
+        tenantId,
+        code: req.body.code.toUpperCase(),
+        isDeleted: false,
+      });
+
+      if (duplicate) {
+        return res.status(400).json({
+          success: false,
+          message: "Subject code already exists"
+        });
+      }
+    }
+
+    // Validate teachers if provided
+    if (req.body.teachers) {
+      const teachersExist = await User.countDocuments({
+        _id: { $in: req.body.teachers },
+        tenantId,
+        role: "teacher",
+        isDeleted: false,
+      });
+
+      if (teachersExist !== req.body.teachers.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more teachers not found"
+        });
+      }
+    }
+
+    // Validate classes if provided
+    if (req.body.classes) {
+      const classesExist = await Class.countDocuments({
+        _id: { $in: req.body.classes },
+        tenantId,
+        isDeleted: false,
+      });
+
+      if (classesExist !== req.body.classes.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more classes not found"
+        });
+      }
+    }
+
     const updateData = {
       ...req.body,
       updatedBy: userId,
     };
 
-    // Don't allow changing these
+    delete updateData.tenantId;
     delete updateData.schoolId;
     delete updateData.createdBy;
 
     const updatedSubject = await Subject.findByIdAndUpdate(
-      id,
+      req.params.id,
       updateData,
       { new: true, runValidators: true }
-    );
+    )
+      .populate("teachers", "fullName email")
+      .populate("classes", "name grade section");
 
     res.json({
       success: true,
@@ -227,7 +343,7 @@ exports.updateSubject = async (req, res) => {
     if (err.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "A subject with this code already exists"
+        message: "Subject code already exists"
       });
     }
 
@@ -247,17 +363,22 @@ exports.updateSubject = async (req, res) => {
 };
 
 // ============================================
-// DELETE SUBJECT (Soft Delete)
+// DELETE SUBJECT
 // ============================================
 exports.deleteSubject = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { id } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
 
     const subject = await Subject.findOne({
-      _id: id,
-      schoolId,
+      _id: req.params.id,
+      tenantId,
       isDeleted: false,
     });
 
@@ -268,17 +389,15 @@ exports.deleteSubject = async (req, res) => {
       });
     }
 
-    // Soft delete
     subject.isDeleted = true;
     subject.deletedAt = new Date();
-    subject.deletedBy = userId;
-    subject.status = "archived";
+    subject.status = "inactive";
     await subject.save();
 
     res.json({
       success: true,
       message: "Subject deleted successfully",
-      data: { _id: id }
+      data: { _id: subject._id }
     });
   } catch (err) {
     console.error("deleteSubject error:", err);
@@ -290,47 +409,66 @@ exports.deleteSubject = async (req, res) => {
 };
 
 // ============================================
-// GET SUBJECTS BY CATEGORY
+// GET STATISTICS
 // ============================================
-exports.getByCategory = async (req, res) => {
+exports.getStatistics = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const { category } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
 
-    const subjects = await Subject.getByCategory(schoolId, category);
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
+    const stats = await Subject.aggregate([
+      {
+        $match: {
+          tenantId: new mongoose.Types.ObjectId(tenantId),
+          isDeleted: false
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          active: {
+            $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] }
+          }
+        }
+      }
+    ]);
+
+    // Get category-wise count
+    const categoryCounts = await Subject.aggregate([
+      {
+        $match: {
+          tenantId: new mongoose.Types.ObjectId(tenantId),
+          status: "active",
+          isDeleted: false
+        }
+      },
+      {
+        $group: {
+          _id: "$category",
+          count: { $sum: 1 }
+        }
+      }
+    ]);
 
     res.json({
       success: true,
-      data: subjects
+      data: {
+        ...(stats[0] || { total: 0, active: 0 }),
+        categoryCounts
+      }
     });
   } catch (err) {
-    console.error("getByCategory error:", err);
+    console.error("getStatistics error:", err);
     res.status(500).json({
       success: false,
-      message: err.message || "Failed to fetch subjects"
-    });
-  }
-};
-
-// ============================================
-// GET SUBJECTS FOR GRADE
-// ============================================
-exports.getForGrade = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    const { grade } = req.params;
-
-    const subjects = await Subject.getForGrade(schoolId, grade);
-
-    res.json({
-      success: true,
-      data: subjects
-    });
-  } catch (err) {
-    console.error("getForGrade error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch subjects"
+      message: err.message || "Failed to get statistics"
     });
   }
 };
@@ -340,8 +478,16 @@ exports.getForGrade = async (req, res) => {
 // ============================================
 exports.bulkCreateSubjects = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { subjects } = req.body;
 
     if (!subjects || !Array.isArray(subjects) || subjects.length === 0) {
@@ -360,7 +506,8 @@ exports.bulkCreateSubjects = async (req, res) => {
       try {
         const newSubject = new Subject({
           ...subjectData,
-          schoolId,
+          tenantId,
+          schoolId: tenantId,
           createdBy: userId,
           updatedBy: userId,
         });

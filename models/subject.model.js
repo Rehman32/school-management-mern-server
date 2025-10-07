@@ -1,211 +1,161 @@
-// SUBJECT MODEL
+// ============================================
+// SUBJECT MODEL - MULTI-TENANT COMPATIBLE
 // ============================================
 
 const mongoose = require("mongoose");
 
-const SubjectSchema = new mongoose.Schema(
-  {
-    schoolId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "School",
-      required: true,
-      index: true,
-    },
-
-    // Basic Information
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    code: {
-      type: String,
-      required: true,
-      trim: true,
-      uppercase: true,
-    },
-    description: String,
-
-    // Academic Details
-    category: {
-      type: String,
-      enum: ["core", "elective", "optional", "extra_curricular", "language"],
-      default: "core",
-    },
-    department: {
-      type: String,
-      trim: true,
-    },
-
-    // Credit & Marks
-    credits: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    maxMarks: {
-      type: Number,
-      default: 100,
-      min: 0,
-    },
-    passingMarks: {
-      type: Number,
-      default: 33,
-      min: 0,
-    },
-
-    // Subject Type
-    hasTheory: {
-      type: Boolean,
-      default: true,
-    },
-    hasPractical: {
-      type: Boolean,
-      default: false,
-    },
-    practicalMarks: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    // Lab Requirements
-    requiresLab: {
-      type: Boolean,
-      default: false,
-    },
-    labEquipment: [String],
-
-    // Prerequisites
-    prerequisites: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Subject",
-      },
-    ],
-
-    // Order/Sequence
-    displayOrder: {
-      type: Number,
-      default: 0,
-    },
-
-    // Applicable Grades
-    applicableGrades: [String],
-
-    // Resources
-    syllabus: {
-      url: String,
-      uploadedAt: Date,
-    },
-    textbooks: [
-      {
-        title: String,
-        author: String,
-        publisher: String,
-        isbn: String,
-      },
-    ],
-    referenceMaterials: [
-      {
-        title: String,
-        type: String,
-        url: String,
-      },
-    ],
-
-    // Status
-    status: {
-      type: String,
-      enum: ["active", "inactive", "archived"],
-      default: "active",
-      index: true,
-    },
-
-    // Academic Year (for year-specific subjects)
-    academicYears: [String],
-
-    // Metadata
-    isDeleted: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
-    deletedAt: Date,
-    deletedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-    updatedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
+const SubjectSchema = new mongoose.Schema({
+  // ===== TENANT RELATIONSHIP (REQUIRED) =====
+  tenantId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Tenant",
+    required: [true, "Tenant ID is required"],
+    index: true,
   },
-  { 
-    timestamps: true 
-  }
-);
+  // Keep schoolId for backward compatibility
+  schoolId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "School",
+    required: false,
+  },
 
-// ============================================
-// INDEXES
-// ============================================
+  // ===== BASIC INFORMATION =====
+  name: {
+    type: String,
+    required: [true, "Subject name is required"],
+    trim: true,
+    index: true,
+  },
+  code: {
+    type: String,
+    required: [true, "Subject code is required"],
+    trim: true,
+    uppercase: true,
+    index: true,
+  },
+  description: {
+    type: String,
+    trim: true,
+  },
 
-// ✅ FIXED: School-scoped unique code
-SubjectSchema.index(
-  { schoolId: 1, code: 1 },
-  { 
-    unique: true,
-    partialFilterExpression: { isDeleted: false }
-  }
-);
+  // ===== CATEGORIZATION =====
+  category: {
+    type: String,
+    enum: ["", "core", "elective", "language", "practical", "other"],
+    default: "",
+  },
+  type: {
+    type: String,
+    enum: ["", "theory", "practical", "both"],
+    default: "theory",
+  },
 
-SubjectSchema.index({ schoolId: 1, category: 1, status: 1 });
-SubjectSchema.index({ schoolId: 1, department: 1 });
-SubjectSchema.index({ name: "text", code: "text", description: "text" });
+  // ===== ACADEMIC DETAILS =====
+  grade: {
+    type: String,
+    trim: true,
+  },
+  stream: {
+    type: String,
+    enum: ["", "science", "commerce", "arts", "general"],
+    default: "",
+  },
 
-// ============================================
-// VIRTUAL FIELDS
-// ============================================
+  // ===== CREDIT & MARKS =====
+  credits: {
+    type: Number,
+    min: 0,
+    default: 0,
+  },
+  maxMarks: {
+    type: Number,
+    min: 0,
+    default: 100,
+  },
+  passingMarks: {
+    type: Number,
+    min: 0,
+    default: 35,
+  },
 
-// Total marks (theory + practical)
-SubjectSchema.virtual("totalMarks").get(function() {
-  return (this.maxMarks || 0) + (this.practicalMarks || 0);
+  // ===== TEACHER ASSIGNMENT =====
+  teachers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+  }],
+
+  // ===== CLASS ASSIGNMENT =====
+  classes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Class",
+  }],
+
+  // ===== SYLLABUS =====
+  syllabus: {
+    type: String,
+    trim: true,
+  },
+  textbooks: [{
+    title: String,
+    author: String,
+    publisher: String,
+    isbn: String,
+  }],
+
+  // ===== SCHEDULE =====
+  hoursPerWeek: {
+    type: Number,
+    min: 0,
+    default: 0,
+  },
+  totalHours: {
+    type: Number,
+    min: 0,
+    default: 0,
+  },
+
+  // ===== STATUS =====
+  status: {
+    type: String,
+    enum: ["active", "inactive", "archived"],
+    default: "active",
+    index: true,
+  },
+
+  // ===== SOFT DELETE =====
+  isDeleted: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  deletedAt: Date,
+
+  // ===== AUDIT =====
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+  },
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+  },
+}, {
+  timestamps: true,
 });
 
-SubjectSchema.set("toJSON", { virtuals: true });
-SubjectSchema.set("toObject", { virtuals: true });
+// ===== INDEXES =====
+SubjectSchema.index({ tenantId: 1, code: 1 }, { unique: true });
+SubjectSchema.index({ tenantId: 1, name: 1 });
+SubjectSchema.index({ tenantId: 1, status: 1 });
+SubjectSchema.index({ tenantId: 1, isDeleted: 1 });
 
-// ============================================
-// STATIC METHODS
-// ============================================
+// ===== PRE-SAVE HOOK =====
+SubjectSchema.pre("save", function(next) {
+  // Backward compatibility
+  if (this.schoolId && !this.tenantId) {
+    this.tenantId = this.schoolId;
+  }
+  next();
+});
 
-// Get subjects by category
-SubjectSchema.statics.getByCategory = async function(schoolId, category) {
-  return this.find({
-    schoolId,
-    category,
-    status: "active",
-    isDeleted: false,
-  })
-    .sort({ displayOrder: 1, name: 1 })
-    .lean();
-};
-
-// Get subjects for grade
-SubjectSchema.statics.getForGrade = async function(schoolId, grade) {
-  return this.find({
-    schoolId,
-    applicableGrades: grade,
-    status: "active",
-    isDeleted: false,
-  })
-    .sort({ displayOrder: 1, name: 1 })
-    .lean();
-};
-
-const Subject = mongoose.model("Subject", SubjectSchema);
-module.exports = Subject;
+module.exports = mongoose.model("Subject", SubjectSchema);

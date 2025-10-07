@@ -1,3 +1,4 @@
+//student.service.js
 import BaseService from '../services/base.service.js';
 import Student from '../models/student.model.js';
 

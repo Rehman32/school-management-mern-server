@@ -1,23 +1,31 @@
 // ============================================
-// FIXED STUDENT MODEL - CORRECTED VERSION
+// STUDENT MODEL - MULTI-TENANT COMPATIBLE
+// Professional Production-Ready Version
 // ============================================
 
 const mongoose = require("mongoose");
+
+// ============================================
+// SUB-SCHEMAS
+// ============================================
 
 // Guardian Sub-Schema
 const GuardianSchema = new mongoose.Schema({
   name: { 
     type: String, 
-    required: true 
+    required: [true, "Guardian name is required"]
   },
   relationship: {
     type: String,
-    enum: ["father", "mother", "guardian", "other"],
-    required: true
+    enum: {
+      values: ["father", "mother", "guardian", "other"],
+      message: "{VALUE} is not a valid relationship"
+    },
+    required: [true, "Relationship is required"]
   },
   phone: {
     type: String,
-    required: true,
+    required: [true, "Guardian phone is required"],
     validate: {
       validator: function(v) {
         return /^[+]?[(]?[0-9]{1,4}[)]?[-\s.]?[(]?[0-9]{1,4}[)]?[-\s.]?[0-9]{1,9}$/.test(v);
@@ -28,6 +36,7 @@ const GuardianSchema = new mongoose.Schema({
   email: {
     type: String,
     lowercase: true,
+    trim: true,
     validate: {
       validator: function(v) {
         if (!v) return true;
@@ -76,12 +85,29 @@ const DocumentSchema = new mongoose.Schema({
   }
 }, { _id: true });
 
-// Main Student Schema
+// ============================================
+// MAIN STUDENT SCHEMA
+// ============================================
+
 const StudentSchema = new mongoose.Schema({
-  // Basic Information
+  // ===== TENANT RELATIONSHIP (MULTI-TENANT) =====
+  tenantId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Tenant",
+    required: [true, "Tenant ID is required"],
+    index: true,
+  },
+  // Keep schoolId for backward compatibility
+  schoolId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "School",
+    required: false,
+  },
+
+  // ===== BASIC INFORMATION =====
   fullName: { 
     type: String, 
-    required: true,
+    required: [true, "Full name is required"],
     trim: true,
     index: true
   },
@@ -97,7 +123,7 @@ const StudentSchema = new mongoose.Schema({
     type: String, 
     lowercase: true,
     trim: true,
-    sparse: true, // Allow multiple null values
+    sparse: true,
     validate: {
       validator: function(v) {
         if (!v) return true;
@@ -117,23 +143,22 @@ const StudentSchema = new mongoose.Schema({
     }
   },
   
-  // Academic Information
+  // ===== ACADEMIC INFORMATION =====
   admissionNumber: {
     type: String,
-    required: false, // ✅ FIXED: Not required, auto-generated
-    unique: false, // Will use compound index with schoolId
+    required: false,
     index: true,
     sparse: true
   },
   rollNumber: { 
     type: String,
-    required: true,
+    required: [true, "Roll number is required"],
     index: true
   },
   class: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: "Class",
-    required: true,
+    required: [true, "Class is required"],
     index: true
   },
   section: String,
@@ -152,15 +177,18 @@ const StudentSchema = new mongoose.Schema({
   previousSchool: String,
   previousClass: String,
   
-  // Personal Information
+  // ===== PERSONAL INFORMATION =====
   gender: { 
     type: String, 
-    enum: ["male", "female", "other"],
-    required: true
+    enum: {
+      values: ["male", "female", "other"],
+      message: "{VALUE} is not a valid gender"
+    },
+    required: [true, "Gender is required"]
   },
   dob: { 
     type: Date,
-    required: true,
+    required: [true, "Date of birth is required"],
     validate: {
       validator: function(v) {
         return v < new Date();
@@ -183,7 +211,7 @@ const StudentSchema = new mongoose.Schema({
     default: ""
   },
   
-  // Contact Information
+  // ===== CONTACT INFORMATION =====
   address: {
     street: String,
     city: String,
@@ -192,7 +220,7 @@ const StudentSchema = new mongoose.Schema({
     country: { type: String, default: "India" }
   },
   
-  // Guardian Information
+  // ===== GUARDIAN INFORMATION =====
   guardians: {
     type: [GuardianSchema],
     validate: {
@@ -204,11 +232,11 @@ const StudentSchema = new mongoose.Schema({
   },
   emergencyContacts: [EmergencyContactSchema],
   
-  // Health Information
+  // ===== HEALTH INFORMATION =====
   medicalConditions: String,
   allergies: String,
   
-  // Transport & Hostel
+  // ===== TRANSPORT & HOSTEL =====
   transportRequired: {
     type: Boolean,
     default: false
@@ -221,7 +249,7 @@ const StudentSchema = new mongoose.Schema({
   hostelBlock: String,
   hostelRoom: String,
   
-  // Status & Dates
+  // ===== STATUS & DATES =====
   status: {
     type: String,
     enum: ["active", "inactive", "graduated", "transferred", "expelled", "suspended"],
@@ -241,19 +269,11 @@ const StudentSchema = new mongoose.Schema({
   leftDate: Date,
   graduationDate: Date,
   
-  // Documents
+  // ===== DOCUMENTS =====
   documents: [DocumentSchema],
   photoUrl: String,
   
-  // School Reference
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "School",
-    required: true,
-    index: true
-  },
-  
-  // Metadata
+  // ===== METADATA =====
   notes: String,
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -262,7 +282,15 @@ const StudentSchema = new mongoose.Schema({
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User"
-  }
+  },
+
+  // ===== SOFT DELETE =====
+  isDeleted: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  deletedAt: Date,
 }, { 
   timestamps: true 
 });
@@ -271,17 +299,18 @@ const StudentSchema = new mongoose.Schema({
 // INDEXES FOR PERFORMANCE
 // ============================================
 
-// ✅ FIXED: Compound unique indexes (scoped to school)
-StudentSchema.index({ schoolId: 1, admissionNumber: 1 }, { 
+// Multi-tenant scoped unique indexes
+StudentSchema.index({ tenantId: 1, admissionNumber: 1 }, { 
   unique: true, 
-  sparse: true // Allow documents without admissionNumber
+  sparse: true 
 });
-StudentSchema.index({ schoolId: 1, email: 1 }, { 
+StudentSchema.index({ tenantId: 1, email: 1 }, { 
   unique: true, 
   sparse: true
 });
-StudentSchema.index({ schoolId: 1, class: 1, rollNumber: 1 }, { unique: true });
-StudentSchema.index({ schoolId: 1, status: 1 });
+StudentSchema.index({ tenantId: 1, class: 1, rollNumber: 1 }, { unique: true });
+StudentSchema.index({ tenantId: 1, status: 1 });
+StudentSchema.index({ tenantId: 1, isDeleted: 1 });
 StudentSchema.index({ fullName: "text" });
 
 // ============================================
@@ -309,20 +338,24 @@ StudentSchema.set("toJSON", { virtuals: true });
 StudentSchema.set("toObject", { virtuals: true });
 
 // ============================================
-// MIDDLEWARE - AUTO-GENERATE ADMISSION NUMBER
+// MIDDLEWARE
 // ============================================
 
-// ✅ FIXED: Better pre-save hook
+// Pre-save hook: Backward compatibility + auto-generate admission number
 StudentSchema.pre("save", async function(next) {
   try {
-    // Auto-generate admission number only if it's a new document and not provided
+    // Backward compatibility: Copy schoolId to tenantId if missing
+    if (this.schoolId && !this.tenantId) {
+      this.tenantId = this.schoolId;
+    }
+
+    // Auto-generate admission number only if new and not provided
     if (this.isNew && !this.admissionNumber) {
       const year = new Date().getFullYear();
       
-      // Find the last student with admission number for this school
       const lastStudent = await this.constructor
         .findOne({ 
-          schoolId: this.schoolId,
+          tenantId: this.tenantId,
           admissionNumber: { $exists: true, $ne: null }
         })
         .sort({ admissionNumber: -1 })
@@ -332,14 +365,12 @@ StudentSchema.pre("save", async function(next) {
       let sequence = 1;
       
       if (lastStudent && lastStudent.admissionNumber) {
-        // Extract sequence number from last admission number
         const match = lastStudent.admissionNumber.match(/\d+$/);
         if (match) {
           sequence = parseInt(match[0]) + 1;
         }
       }
       
-      // Generate new admission number: ADM2025-0001
       this.admissionNumber = `ADM${year}-${String(sequence).padStart(4, "0")}`;
     }
     
@@ -360,9 +391,14 @@ StudentSchema.pre("save", async function(next) {
 // STATIC METHODS
 // ============================================
 
-StudentSchema.statics.getSchoolStats = async function(schoolId) {
+StudentSchema.statics.getSchoolStats = async function(tenantId) {
   const stats = await this.aggregate([
-    { $match: { schoolId: new mongoose.Types.ObjectId(schoolId) } },
+    { 
+      $match: { 
+        tenantId: new mongoose.Types.ObjectId(tenantId),
+        isDeleted: false
+      } 
+    },
     {
       $group: {
         _id: null,
@@ -388,11 +424,12 @@ StudentSchema.statics.getSchoolStats = async function(schoolId) {
   };
 };
 
-StudentSchema.statics.getByClass = async function(schoolId, classId, options = {}) {
+StudentSchema.statics.getByClass = async function(tenantId, classId, options = {}) {
   return this.find({ 
-    schoolId, 
+    tenantId,
     class: classId,
-    status: options.status || "active"
+    status: options.status || "active",
+    isDeleted: false
   })
   .populate("class", "name grade section")
   .sort({ rollNumber: 1 });

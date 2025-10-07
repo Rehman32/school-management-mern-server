@@ -1,32 +1,25 @@
-//  CLASS CONTROLLER
+// ============================================
+// CLASS CONTROLLER - MULTI-TENANT
+// ============================================
 
 const Class = require("../models/class.model");
-const Teacher = require("../models/teacher.model");
+const User = require("../models/user.model");
 const Student = require("../models/student.model");
 
 // ============================================
-// HELPER: Validate Class Data
-// ============================================
-const validateClass = (data) => {
-  const required = ["grade"];
-  const missing = required.filter(field => !data[field]);
-  
-  if (missing.length > 0) {
-    return {
-      valid: false,
-      message: `Missing required fields: ${missing.join(", ")}`
-    };
-  }
-  
-  return { valid: true };
-};
-
-// ============================================
-// LIST CLASSES (with pagination & filters)
+// LIST CLASSES
 // ============================================
 exports.listClasses = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const {
       page = 1,
       limit = 20,
@@ -34,27 +27,22 @@ exports.listClasses = async (req, res) => {
       grade = "",
       stream = "",
       status = "active",
-      academicYear = "",
     } = req.query;
 
-    // Build query
     const query = {
-      schoolId,
+      tenantId,
       isDeleted: false,
     };
 
     if (status && status !== "all") query.status = status;
     if (grade) query.grade = grade;
     if (stream) query.stream = stream;
-    if (academicYear) query.academicYear = academicYear;
 
-    // Search
     if (search) {
       query.$or = [
         { name: { $regex: search, $options: "i" } },
         { grade: { $regex: search, $options: "i" } },
         { section: { $regex: search, $options: "i" } },
-        { room: { $regex: search, $options: "i" } },
       ];
     }
 
@@ -62,7 +50,7 @@ exports.listClasses = async (req, res) => {
 
     const [classes, total] = await Promise.all([
       Class.find(query)
-        .populate("classTeacher", "fullName email employeeId")
+        .populate("classTeacher", "fullName email")
         .sort({ grade: 1, section: 1 })
         .skip(skip)
         .limit(parseInt(limit))
@@ -94,18 +82,22 @@ exports.listClasses = async (req, res) => {
 // ============================================
 exports.getClassById = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const { id } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
 
     const classData = await Class.findOne({
-      _id: id,
-      schoolId,
+      _id: req.params.id,
+      tenantId,
       isDeleted: false,
     })
-      .populate("classTeacher", "fullName email phone employeeId")
-      .populate("promotedFrom", "name grade section")
-      .populate("promotedTo", "name grade section")
-      .populate("monitors.student", "fullName rollNumber");
+      .populate("classTeacher", "fullName email")
+      .populate("createdBy updatedBy", "name email");
 
     if (!classData) {
       return res.status(404).json({
@@ -114,19 +106,9 @@ exports.getClassById = async (req, res) => {
       });
     }
 
-    // Get student count
-    const studentCount = await Student.countDocuments({
-      class: id,
-      schoolId,
-      status: "active",
-    });
-
     res.json({
       success: true,
-      data: {
-        ...classData.toObject(),
-        studentCount,
-      }
+      data: classData
     });
   } catch (err) {
     console.error("getClassById error:", err);
@@ -142,39 +124,63 @@ exports.getClassById = async (req, res) => {
 // ============================================
 exports.createClass = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
 
-    // Validate input
-    const validation = validateClass(req.body);
-    if (!validation.valid) {
+    if (!tenantId) {
       return res.status(400).json({
         success: false,
-        message: validation.message
+        message: "Tenant ID is required"
+      });
+    }
+
+    if (!req.body.grade) {
+      return res.status(400).json({
+        success: false,
+        message: "Grade is required"
       });
     }
 
     // Validate class teacher if provided
-    if (req.body.classTeacher) {
-      const teacher = await Teacher.findOne({
+    let teacherId = null;
+    if (req.body.classTeacher && req.body.classTeacher.trim() !== '') {
+      const teacher = await User.findOne({
         _id: req.body.classTeacher,
-        schoolId,
-        status: "Active",
+        tenantId: tenantId,
+        role: 'teacher',
         isDeleted: false,
       });
 
       if (!teacher) {
-        return res.status(404).json({
+        return res.status(400).json({
           success: false,
-          message: "Class teacher not found or inactive"
+          message: "Invalid teacher ID"
         });
       }
+      teacherId = teacher._id;
+    }
+
+    // Check for duplicate
+    const duplicate = await Class.findOne({
+      tenantId,
+      grade: req.body.grade,
+      section: req.body.section || "",
+      isDeleted: false,
+    });
+
+    if (duplicate) {
+      return res.status(400).json({
+        success: false,
+        message: "A class with this grade and section already exists"
+      });
     }
 
     // Create class
     const classData = {
       ...req.body,
-      schoolId,
+      tenantId,
+      schoolId: tenantId, // Backward compatibility
+      classTeacher: teacherId,
       createdBy: userId,
       updatedBy: userId,
     };
@@ -182,13 +188,11 @@ exports.createClass = async (req, res) => {
     const newClass = new Class(classData);
     await newClass.save();
 
-    // Populate and return
-    const populated = await Class.findById(newClass._id)
-      .populate("classTeacher", "fullName email employeeId");
+    await newClass.populate("classTeacher", "fullName email");
 
     res.status(201).json({
       success: true,
-      data: populated,
+      data: newClass,
       message: "Class created successfully"
     });
   } catch (err) {
@@ -197,7 +201,7 @@ exports.createClass = async (req, res) => {
     if (err.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "A class with this grade and section already exists for this academic year"
+        message: "A class with this grade and section already exists"
       });
     }
 
@@ -221,14 +225,19 @@ exports.createClass = async (req, res) => {
 // ============================================
 exports.updateClass = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { id } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
 
-    // Find existing class
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const existing = await Class.findOne({
-      _id: id,
-      schoolId,
+      _id: req.params.id,
+      tenantId,
       isDeleted: false,
     });
 
@@ -239,39 +248,39 @@ exports.updateClass = async (req, res) => {
       });
     }
 
-    // Validate class teacher if provided
+    // Validate class teacher if changed
     if (req.body.classTeacher && req.body.classTeacher !== existing.classTeacher?.toString()) {
-      const teacher = await Teacher.findOne({
-        _id: req.body.classTeacher,
-        schoolId,
-        status: "Active",
-        isDeleted: false,
-      });
-
-      if (!teacher) {
-        return res.status(404).json({
-          success: false,
-          message: "Class teacher not found or inactive"
+      if (req.body.classTeacher.trim() !== '') {
+        const teacher = await User.findOne({
+          _id: req.body.classTeacher,
+          tenantId,
+          role: 'teacher',
+          isDeleted: false,
         });
+
+        if (!teacher) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid teacher ID"
+          });
+        }
       }
     }
 
-    // Update class
     const updateData = {
       ...req.body,
       updatedBy: userId,
     };
 
-    // Don't allow changing these
+    delete updateData.tenantId;
     delete updateData.schoolId;
     delete updateData.createdBy;
-    delete updateData.academicYear; // Prevent year change
 
     const updatedClass = await Class.findByIdAndUpdate(
-      id,
+      req.params.id,
       updateData,
       { new: true, runValidators: true }
-    ).populate("classTeacher", "fullName email employeeId");
+    ).populate("classTeacher", "fullName email");
 
     res.json({
       success: true,
@@ -304,17 +313,22 @@ exports.updateClass = async (req, res) => {
 };
 
 // ============================================
-// DELETE CLASS (Soft Delete)
+// DELETE CLASS
 // ============================================
 exports.deleteClass = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { id } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
 
     const classData = await Class.findOne({
-      _id: id,
-      schoolId,
+      _id: req.params.id,
+      tenantId,
       isDeleted: false,
     });
 
@@ -325,31 +339,15 @@ exports.deleteClass = async (req, res) => {
       });
     }
 
-    // Check if class has students
-    const studentCount = await Student.countDocuments({
-      class: id,
-      schoolId,
-      status: "active",
-    });
-
-    if (studentCount > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot delete class with ${studentCount} active students. Please reassign them first.`
-      });
-    }
-
-    // Soft delete
     classData.isDeleted = true;
     classData.deletedAt = new Date();
-    classData.deletedBy = userId;
-    classData.status = "archived";
+    classData.status = "inactive";
     await classData.save();
 
     res.json({
       success: true,
       message: "Class deleted successfully",
-      data: { _id: id }
+      data: { _id: classData._id }
     });
   } catch (err) {
     console.error("deleteClass error:", err);
@@ -365,36 +363,42 @@ exports.deleteClass = async (req, res) => {
 // ============================================
 exports.getStatistics = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const { academicYear } = req.query;
+    const tenantId = req.user?.tenantId || req.tenantId;
 
-    const stats = await Class.getSchoolStats(schoolId, academicYear);
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
 
-    // Get grade-wise distribution
-    const gradeDistribution = await Class.aggregate([
+    const stats = await Class.aggregate([
       {
         $match: {
-          schoolId,
-          isDeleted: false,
-          status: "active",
+          tenantId: new mongoose.Types.ObjectId(tenantId),
+          isDeleted: false
         }
       },
       {
         $group: {
-          _id: "$grade",
-          classCount: { $sum: 1 },
+          _id: null,
+          totalClasses: { $sum: 1 },
+          activeClasses: {
+            $sum: { $cond: [{ $eq: ["$status", "active"] }, 1, 0] }
+          },
           totalCapacity: { $sum: "$maxCapacity" },
-          totalEnrolled: { $sum: "$currentEnrollment" },
+          totalEnrolled: { $sum: "$currentEnrollment" }
         }
-      },
-      { $sort: { _id: 1 } }
+      }
     ]);
 
     res.json({
       success: true,
-      data: {
-        ...stats,
-        gradeDistribution,
+      data: stats[0] || {
+        totalClasses: 0,
+        activeClasses: 0,
+        totalCapacity: 0,
+        totalEnrolled: 0
       }
     });
   } catch (err) {
@@ -411,54 +415,51 @@ exports.getStatistics = async (req, res) => {
 // ============================================
 exports.updateEnrollmentCount = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { id } = req.params;
 
-    // Get actual student count
-    const [maleCount, femaleCount] = await Promise.all([
-      Student.countDocuments({
-        class: id,
-        schoolId,
-        status: "active",
-        gender: "male",
-      }),
-      Student.countDocuments({
-        class: id,
-        schoolId,
-        status: "active",
-        gender: "female",
-      })
-    ]);
+    const classData = await Class.findOne({
+      _id: id,
+      tenantId,
+      isDeleted: false,
+    });
 
-    const totalCount = maleCount + femaleCount;
-
-    const updatedClass = await Class.findOneAndUpdate(
-      { _id: id, schoolId },
-      {
-        currentEnrollment: totalCount,
-        maleCount: maleCount,
-        femaleCount: femaleCount,
-      },
-      { new: true }
-    );
-
-    if (!updatedClass) {
+    if (!classData) {
       return res.status(404).json({
         success: false,
         message: "Class not found"
       });
     }
 
+    // Count students
+    const studentCount = await Student.countDocuments({
+      class: id,
+      tenantId,
+      status: "active",
+      isDeleted: false,
+    });
+
+    classData.currentEnrollment = studentCount;
+    await classData.save();
+
     res.json({
       success: true,
-      data: updatedClass,
-      message: "Enrollment count updated successfully"
+      data: classData,
+      message: "Enrollment count updated"
     });
   } catch (err) {
     console.error("updateEnrollmentCount error:", err);
     res.status(500).json({
       success: false,
-      message: err.message || "Failed to update enrollment count"
+      message: err.message || "Failed to update enrollment"
     });
   }
 };
@@ -468,8 +469,16 @@ exports.updateEnrollmentCount = async (req, res) => {
 // ============================================
 exports.bulkCreateClasses = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { classes } = req.body;
 
     if (!classes || !Array.isArray(classes) || classes.length === 0) {
@@ -488,7 +497,8 @@ exports.bulkCreateClasses = async (req, res) => {
       try {
         const newClass = new Class({
           ...classData,
-          schoolId,
+          tenantId,
+          schoolId: tenantId,
           createdBy: userId,
           updatedBy: userId,
         });

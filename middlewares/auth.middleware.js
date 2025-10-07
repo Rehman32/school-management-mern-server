@@ -274,9 +274,20 @@ class AuthMiddleware {
   }
 }
 
+/**
+ * Extract tenant ID and inject into request
+ */
+exports.injectTenant = (req, res, next) => {
+  if (req.user && req.user.tenantId) {
+    req.tenantId = req.user.tenantId;
+  }
+  next();
+};
+
 // Export both new class methods and old exports for backward compatibility
 module.exports = AuthMiddleware;
 
 // Backward compatibility exports
 module.exports.protect = AuthMiddleware.protect;
 module.exports.authorize = AuthMiddleware.authorize;
+module.exports.injectTenant = exports.injectTenant;

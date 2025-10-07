@@ -1,13 +1,19 @@
-// teacher.controller.js
+// ============================================
+// TEACHER CONTROLLER - MULTI-TENANT
+// Professional Production-Ready Version
+// ============================================
 
 const Teacher = require("../models/teacher.model");
-const TeacherAssignment = require("../models/teacherAssignment.model");
+const Class = require("../models/class.model");
+const Subject = require("../models/subject.model");
+const mongoose = require("mongoose");
 
 // ============================================
-// HELPER: Validate Teacher Data
+// HELPER FUNCTIONS
 // ============================================
+
 const validateTeacher = (data) => {
-  const required = ["fullName", "email", "gender"];
+  const required = ["fullName", "email", "phone", "gender"];
   const missing = required.filter(field => !data[field]);
   
   if (missing.length > 0) {
@@ -21,55 +27,69 @@ const validateTeacher = (data) => {
 };
 
 // ============================================
-// LIST TEACHERS (with advanced filtering)
+// GET ALL TEACHERS (with pagination & search)
 // ============================================
 exports.listTeachers = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const {
       page = 1,
-      limit = 10,
-      search = "",
-      status = "",
-      department = "",
-      employmentType = "",
-      gender = ""
+      limit = 20,
+      search,
+      status = "Active",
+      department,
+      employmentType,
+      gender,
+      sort = "-dateJoined"
     } = req.query;
-
+    
     // Build query
     const query = { 
-      schoolId,
+      tenantId,
       isDeleted: false
     };
-
-    if (status && status !== "all") query.status = status;
+    
+    if (status && status !== "all") {
+      query.status = status;
+    }
     if (department) query.department = department;
     if (employmentType) query.employmentType = employmentType;
     if (gender) query.gender = gender;
-
-    // Text search
+    
+    // Search
     if (search) {
-      query.$text = { $search: search };
+      query.$or = [
+        { fullName: { $regex: search, $options: "i" } },
+        { email: { $regex: search, $options: "i" } },
+        { phone: { $regex: search, $options: "i" } },
+        { employeeId: { $regex: search, $options: "i" } }
+      ];
     }
-
+    
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // Execute query with pagination
+    
     const [teachers, total] = await Promise.all([
       Teacher.find(query)
-        .select("-salaryStructure -bankDetails -pfNumber -esiNumber -panNumber -aadharNumber") // Hide sensitive data
-        .populate("subjects", "name")
+        .populate("subjects", "name code")
         .populate("classes", "name grade section")
         .populate("classTeacherOf", "name grade section")
-        .sort(search ? { score: { $meta: "textScore" } } : { createdAt: -1 })
+        .sort(sort)
         .skip(skip)
         .limit(parseInt(limit))
         .lean(),
       Teacher.countDocuments(query)
     ]);
-
-    res.json({
-      success: true,
+    
+    res.json({ 
+      success: true, 
       data: teachers,
       pagination: {
         total,
@@ -79,10 +99,10 @@ exports.listTeachers = async (req, res) => {
       }
     });
   } catch (err) {
-    console.error("listTeachers error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch teachers"
+    console.error("Error fetching teachers:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: err.message || "Server Error" 
     });
   }
 };
@@ -92,54 +112,37 @@ exports.listTeachers = async (req, res) => {
 // ============================================
 exports.getTeacherById = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const { id } = req.params;
+    const tenantId = req.user?.tenantId || req.tenantId;
 
-    const teacher = await Teacher.findOne({
-      _id: id,
-      schoolId,
-      isDeleted: false
-    })
-      .populate("subjects", "name")
-      .populate("classes", "name grade section")
-      .populate("classTeacherOf", "name grade section")
-      .populate("createdBy updatedBy", "name email");
-
-    if (!teacher) {
-      return res.status(404).json({
+    if (!tenantId) {
+      return res.status(400).json({
         success: false,
-        message: "Teacher not found"
+        message: "Tenant ID is required"
       });
     }
 
-    // Get teacher assignments if exists
-    let assignments = [];
-    try {
-      const assignmentData = await TeacherAssignment.findOne({
-        schoolId,
-        teacher: id
-      })
-        .populate("assignments.subject", "name")
-        .populate("assignments.class", "name grade section");
-      
-      if (assignmentData) {
-        assignments = assignmentData.assignments;
-      }
-    } catch (err) {
-      console.error("Error fetching assignments:", err);
+    const teacher = await Teacher.findOne({ 
+      _id: req.params.id, 
+      tenantId,
+      isDeleted: false
+    })
+    .populate("subjects", "name code")
+    .populate("classes", "name grade section")
+    .populate("classTeacherOf", "name grade section")
+    .populate("createdBy updatedBy", "name email");
+    
+    if (!teacher) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Teacher not found" 
+      });
     }
-
-    res.json({
-      success: true,
-      data: {
-        ...teacher.toObject(),
-        assignments
-      }
-    });
+    
+    res.json({ success: true, data: teacher });
   } catch (err) {
-    console.error("getTeacherById error:", err);
-    res.status(500).json({
-      success: false,
+    console.error("Get teacher error:", err);
+    res.status(500).json({ 
+      success: false, 
       message: err.message || "Failed to fetch teacher"
     });
   }
@@ -150,9 +153,16 @@ exports.getTeacherById = async (req, res) => {
 // ============================================
 exports.createTeacher = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
 
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
     // Validate input
     const validation = validateTeacher(req.body);
     if (!validation.valid) {
@@ -161,52 +171,141 @@ exports.createTeacher = async (req, res) => {
         message: validation.message
       });
     }
+    
+    // Check for duplicate email within tenant
+    if (req.body.email) {
+      const existingTeacher = await Teacher.findOne({
+        tenantId,
+        email: req.body.email.toLowerCase(),
+        isDeleted: false
+      });
+      
+      if (existingTeacher) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already exists"
+        });
+      }
+    }
 
-    // ✅ CLEAN UP DATA BEFORE SAVING
+    // Check for duplicate phone within tenant
+    if (req.body.phone) {
+      const existingPhone = await Teacher.findOne({
+        tenantId,
+        phone: req.body.phone,
+        isDeleted: false
+      });
+      
+      if (existingPhone) {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number already exists"
+        });
+      }
+    }
+
+    // Check for duplicate employee ID
+    if (req.body.employeeId) {
+      const existingEmpId = await Teacher.findOne({
+        tenantId,
+        employeeId: req.body.employeeId,
+        isDeleted: false
+      });
+      
+      if (existingEmpId) {
+        return res.status(400).json({
+          success: false,
+          message: "Employee ID already exists"
+        });
+      }
+    }
+    
+    // Validate subjects exist in this tenant
+    if (req.body.subjects && req.body.subjects.length > 0) {
+      const subjectsExist = await Subject.countDocuments({
+        _id: { $in: req.body.subjects },
+        tenantId
+      });
+      
+      if (subjectsExist !== req.body.subjects.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more subjects not found in your school"
+        });
+      }
+    }
+    
+    // Validate classes exist in this tenant
+    if (req.body.classes && req.body.classes.length > 0) {
+      const classesExist = await Class.countDocuments({
+        _id: { $in: req.body.classes },
+        tenantId
+      });
+      
+      if (classesExist !== req.body.classes.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more classes not found in your school"
+        });
+      }
+    }
+
+    // Validate classTeacherOf if provided
+    if (req.body.isClassTeacher && req.body.classTeacherOf) {
+      const classExists = await Class.findOne({
+        _id: req.body.classTeacherOf,
+        tenantId
+      });
+
+      if (!classExists) {
+        return res.status(404).json({
+          success: false,
+          message: "Class not found"
+        });
+      }
+
+      // Check if class already has a class teacher
+      const existingClassTeacher = await Teacher.findOne({
+        tenantId,
+        classTeacherOf: req.body.classTeacherOf,
+        isDeleted: false,
+        status: "Active"
+      });
+
+      if (existingClassTeacher) {
+        return res.status(400).json({
+          success: false,
+          message: `Class already has a class teacher: ${existingClassTeacher.fullName}`
+        });
+      }
+    }
+    
+    // Create teacher
     const teacherData = {
       ...req.body,
-      schoolId,
+      tenantId,
+      schoolId: tenantId, // Backward compatibility
       createdBy: userId,
       updatedBy: userId
     };
-
-    // ✅ FIX: Remove empty classTeacherOf
-    if (!teacherData.classTeacherOf || teacherData.classTeacherOf === "") {
-      delete teacherData.classTeacherOf;
-    }
-
-    // ✅ FIX: Filter out empty emergency contacts
-    if (teacherData.emergencyContacts) {
-      teacherData.emergencyContacts = teacherData.emergencyContacts.filter(
-        contact => contact.name && contact.relationship && contact.phone
-      );
-    }
-
-    // ✅ FIX: Remove empty values from arrays
-    if (teacherData.subjects) {
-      teacherData.subjects = teacherData.subjects.filter(s => s);
-    }
-    if (teacherData.classes) {
-      teacherData.classes = teacherData.classes.filter(c => c);
-    }
-
+    
     const newTeacher = new Teacher(teacherData);
-    await newTeacher.save();
-
+    const savedTeacher = await newTeacher.save();
+    
     // Populate and return
-    const populated = await Teacher.findById(newTeacher._id)
-      .populate("subjects", "name")
+    const populated = await Teacher.findById(savedTeacher._id)
+      .populate("subjects", "name code")
       .populate("classes", "name grade section")
       .populate("classTeacherOf", "name grade section");
-
-    res.status(201).json({
-      success: true,
+    
+    res.status(201).json({ 
+      success: true, 
       data: populated,
       message: "Teacher created successfully"
     });
   } catch (err) {
-    console.error("createTeacher error:", err);
-
+    console.error("Create teacher error:", err);
+    
     if (err.code === 11000) {
       const field = Object.keys(err.keyPattern)[0];
       return res.status(400).json({
@@ -214,7 +313,7 @@ exports.createTeacher = async (req, res) => {
         message: `${field} already exists`
       });
     }
-
+    
     if (err.name === "ValidationError") {
       const messages = Object.values(err.errors).map(e => e.message);
       return res.status(400).json({
@@ -222,10 +321,611 @@ exports.createTeacher = async (req, res) => {
         message: messages.join(", ")
       });
     }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: err.message || "Failed to create teacher"
+    });
+  }
+};
 
+// ============================================
+// UPDATE TEACHER
+// ============================================
+exports.updateTeacher = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
+    // Find existing teacher
+    const existing = await Teacher.findOne({ 
+      _id: req.params.id, 
+      tenantId,
+      isDeleted: false
+    });
+    
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher not found"
+      });
+    }
+    
+    // Check for duplicate email (if changed)
+    if (req.body.email && req.body.email !== existing.email) {
+      const emailExists = await Teacher.findOne({
+        _id: { $ne: req.params.id },
+        tenantId,
+        email: req.body.email.toLowerCase(),
+        isDeleted: false
+      });
+      
+      if (emailExists) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already exists"
+        });
+      }
+    }
+
+    // Check for duplicate phone (if changed)
+    if (req.body.phone && req.body.phone !== existing.phone) {
+      const phoneExists = await Teacher.findOne({
+        _id: { $ne: req.params.id },
+        tenantId,
+        phone: req.body.phone,
+        isDeleted: false
+      });
+      
+      if (phoneExists) {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number already exists"
+        });
+      }
+    }
+
+    // Validate classTeacherOf if being assigned
+    if (req.body.isClassTeacher && req.body.classTeacherOf) {
+      if (req.body.classTeacherOf !== existing.classTeacherOf?.toString()) {
+        const classExists = await Class.findOne({
+          _id: req.body.classTeacherOf,
+          tenantId
+        });
+
+        if (!classExists) {
+          return res.status(404).json({
+            success: false,
+            message: "Class not found"
+          });
+        }
+
+        // Check if class already has another class teacher
+        const existingClassTeacher = await Teacher.findOne({
+          _id: { $ne: req.params.id },
+          tenantId,
+          classTeacherOf: req.body.classTeacherOf,
+          isDeleted: false,
+          status: "Active"
+        });
+
+        if (existingClassTeacher) {
+          return res.status(400).json({
+            success: false,
+            message: `Class already has a class teacher: ${existingClassTeacher.fullName}`
+          });
+        }
+      }
+    }
+
+    // If isClassTeacher is false, clear classTeacherOf
+    if (req.body.isClassTeacher === false) {
+      req.body.classTeacherOf = null;
+    }
+    
+    // Validate subjects if provided
+    if (req.body.subjects && req.body.subjects.length > 0) {
+      const subjectsExist = await Subject.countDocuments({
+        _id: { $in: req.body.subjects },
+        tenantId
+      });
+      
+      if (subjectsExist !== req.body.subjects.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more subjects not found"
+        });
+      }
+    }
+    
+    // Validate classes if provided
+    if (req.body.classes && req.body.classes.length > 0) {
+      const classesExist = await Class.countDocuments({
+        _id: { $in: req.body.classes },
+        tenantId
+      });
+      
+      if (classesExist !== req.body.classes.length) {
+        return res.status(404).json({
+          success: false,
+          message: "One or more classes not found"
+        });
+      }
+    }
+    
+    // Update teacher
+    const updateData = {
+      ...req.body,
+      updatedBy: userId
+    };
+    
+    // Don't allow changing tenantId, schoolId, or createdBy
+    delete updateData.tenantId;
+    delete updateData.schoolId;
+    delete updateData.createdBy;
+    delete updateData.employeeId; // Don't allow changing employee ID
+    
+    const updatedTeacher = await Teacher.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    )
+    .populate("subjects", "name code")
+    .populate("classes", "name grade section")
+    .populate("classTeacherOf", "name grade section");
+    
+    res.json({ 
+      success: true, 
+      data: updatedTeacher,
+      message: "Teacher updated successfully"
+    });
+  } catch (err) {
+    console.error("Update teacher error:", err);
+    
+    if (err.code === 11000) {
+      const field = Object.keys(err.keyPattern)[0];
+      return res.status(400).json({
+        success: false,
+        message: `${field} already exists`
+      });
+    }
+    
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(", ")
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      message: err.message || "Failed to update teacher"
+    });
+  }
+};
+
+// ============================================
+// DELETE TEACHER (Soft Delete)
+// ============================================
+exports.deleteTeacher = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
+    const teacher = await Teacher.findOne({ 
+      _id: req.params.id, 
+      tenantId,
+      isDeleted: false
+    });
+    
+    if (!teacher) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher not found"
+      });
+    }
+
+    // Soft delete
+    teacher.isDeleted = true;
+    teacher.deletedAt = new Date();
+    teacher.deletedBy = userId;
+    teacher.status = "Inactive";
+    await teacher.save();
+    
+    res.json({ 
+      success: true, 
+      message: "Teacher deleted successfully",
+      data: { _id: teacher._id }
+    });
+  } catch (err) {
+    console.error("Delete teacher error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: err.message || "Failed to delete teacher"
+    });
+  }
+};
+
+// ============================================
+// GET STATISTICS
+// ============================================
+exports.getStatistics = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
+    const stats = await Teacher.getSchoolStats(tenantId);
+    
+    // Get department-wise count
+    const departmentCounts = await Teacher.aggregate([
+      { 
+        $match: { 
+          tenantId: new mongoose.Types.ObjectId(tenantId),
+          status: "Active",
+          isDeleted: false
+        } 
+      },
+      { 
+        $group: { 
+          _id: "$department", 
+          count: { $sum: 1 } 
+        } 
+      },
+      { $sort: { count: -1 } }
+    ]);
+
+    // Get employment type distribution
+    const employmentTypes = await Teacher.aggregate([
+      { 
+        $match: { 
+          tenantId: new mongoose.Types.ObjectId(tenantId),
+          status: "Active",
+          isDeleted: false
+        } 
+      },
+      { 
+        $group: { 
+          _id: "$employmentType", 
+          count: { $sum: 1 } 
+        } 
+      }
+    ]);
+    
+    res.json({
+      success: true,
+      data: {
+        ...stats,
+        departmentCounts,
+        employmentTypes
+      }
+    });
+  } catch (err) {
+    console.error("Get statistics error:", err);
     res.status(500).json({
       success: false,
-      message: err.message || "Failed to create teacher"
+      message: err.message || "Failed to get statistics"
+    });
+  }
+};
+
+// ============================================
+// GET DEPARTMENTS (Unique list)
+// ============================================
+exports.getDepartments = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
+    const departments = await Teacher.distinct("department", {
+      tenantId,
+      isDeleted: false,
+      department: { $ne: null, $ne: "" }
+    });
+
+    res.json({
+      success: true,
+      data: departments.sort()
+    });
+  } catch (err) {
+    console.error("Get departments error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to get departments"
+    });
+  }
+};
+
+// ============================================
+// BULK UPDATE STATUS
+// ============================================
+exports.bulkUpdateStatus = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
+    const { teacherIds, status, reason } = req.body;
+    
+    if (!teacherIds || !Array.isArray(teacherIds) || teacherIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "teacherIds array is required"
+      });
+    }
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: "status is required"
+      });
+    }
+
+    const validStatuses = ["Active", "Inactive", "On Leave", "Resigned", "Terminated"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`
+      });
+    }
+    
+    // Update teachers
+    const result = await Teacher.updateMany(
+      {
+        _id: { $in: teacherIds },
+        tenantId,
+        isDeleted: false
+      },
+      {
+        $set: { status },
+        $push: {
+          statusHistory: {
+            status,
+            changedAt: new Date(),
+            changedBy: userId,
+            reason: reason || "Bulk status update"
+          }
+        }
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} teachers status updated successfully`,
+      count: result.modifiedCount
+    });
+  } catch (err) {
+    console.error("Bulk update status error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to update status"
+    });
+  }
+};
+
+// ============================================
+// BULK DELETE TEACHERS
+// ============================================
+exports.bulkDelete = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
+    const { teacherIds } = req.body;
+    
+    if (!teacherIds || !Array.isArray(teacherIds) || teacherIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "teacherIds array is required"
+      });
+    }
+    
+    // Soft delete
+    const result = await Teacher.updateMany(
+      {
+        _id: { $in: teacherIds },
+        tenantId,
+        isDeleted: false
+      },
+      {
+        $set: {
+          isDeleted: true,
+          deletedAt: new Date(),
+          deletedBy: userId,
+          status: "Inactive"
+        }
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} teachers deleted successfully`,
+      count: result.modifiedCount
+    });
+  } catch (err) {
+    console.error("Bulk delete error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to delete teachers"
+    });
+  }
+};
+
+// ============================================
+// ASSIGN SUBJECTS TO TEACHER
+// ============================================
+exports.assignSubjects = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
+    const { teacherId, subjectIds } = req.body;
+
+    if (!teacherId || !subjectIds || !Array.isArray(subjectIds)) {
+      return res.status(400).json({
+        success: false,
+        message: "teacherId and subjectIds array are required"
+      });
+    }
+
+    // Validate teacher exists
+    const teacher = await Teacher.findOne({
+      _id: teacherId,
+      tenantId,
+      isDeleted: false
+    });
+
+    if (!teacher) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher not found"
+      });
+    }
+
+    // Validate subjects exist
+    const subjects = await Subject.countDocuments({
+      _id: { $in: subjectIds },
+      tenantId
+    });
+
+    if (subjects !== subjectIds.length) {
+      return res.status(404).json({
+        success: false,
+        message: "One or more subjects not found"
+      });
+    }
+
+    // Assign subjects
+    teacher.subjects = subjectIds;
+    await teacher.save();
+
+    await teacher.populate("subjects", "name code");
+
+    res.json({
+      success: true,
+      message: "Subjects assigned successfully",
+      data: teacher
+    });
+  } catch (err) {
+    console.error("Assign subjects error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to assign subjects"
+    });
+  }
+};
+
+// ============================================
+// ASSIGN CLASSES TO TEACHER
+// ============================================
+exports.assignClasses = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
+    const { teacherId, classIds } = req.body;
+
+    if (!teacherId || !classIds || !Array.isArray(classIds)) {
+      return res.status(400).json({
+        success: false,
+        message: "teacherId and classIds array are required"
+      });
+    }
+
+    // Validate teacher exists
+    const teacher = await Teacher.findOne({
+      _id: teacherId,
+      tenantId,
+      isDeleted: false
+    });
+
+    if (!teacher) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher not found"
+      });
+    }
+
+    // Validate classes exist
+    const classes = await Class.countDocuments({
+      _id: { $in: classIds },
+      tenantId
+    });
+
+    if (classes !== classIds.length) {
+      return res.status(404).json({
+        success: false,
+        message: "One or more classes not found"
+      });
+    }
+
+    // Assign classes
+    teacher.classes = classIds;
+    await teacher.save();
+
+    await teacher.populate("classes", "name grade section");
+
+    res.json({
+      success: true,
+      message: "Classes assigned successfully",
+      data: teacher
+    });
+  } catch (err) {
+    console.error("Assign classes error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to assign classes"
     });
   }
 };
@@ -253,346 +953,5 @@ exports.getTeachersMinimal = async (req, res) => {
   } catch (err) {
     console.error("getTeachersMinimal error:", err);
     return res.status(500).json({ success: false, message: "Failed to fetch teachers", error: err.message });
-  }
-};
-
-// ============================================
-// UPDATE TEACHER
-// ============================================
-exports.updateTeacher = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { id } = req.params;
-
-    // Find existing teacher
-    const existing = await Teacher.findOne({
-      _id: id,
-      schoolId,
-      isDeleted: false
-    });
-
-    if (!existing) {
-      return res.status(404).json({
-        success: false,
-        message: "Teacher not found"
-      });
-    }
-
-    // Track status changes
-    if (req.body.status && req.body.status !== existing.status) {
-      if (!existing.statusHistory) {
-        existing.statusHistory = [];
-      }
-      existing.statusHistory.push({
-        status: req.body.status,
-        changedAt: new Date(),
-        changedBy: userId,
-        reason: req.body.statusReason || ""
-      });
-    }
-
-    // Update teacher
-    const updateData = {
-      ...req.body,
-      updatedBy: userId
-    };
-
-    // Don't allow changing these fields
-    delete updateData.schoolId;
-    delete updateData.createdBy;
-    delete updateData.employeeId; // Prevent manual change
-
-    const updatedTeacher = await Teacher.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    )
-      .populate("subjects", "name")
-      .populate("classes", "name grade section")
-      .populate("classTeacherOf", "name grade section");
-
-    res.json({
-      success: true,
-      data: updatedTeacher,
-      message: "Teacher updated successfully"
-    });
-  } catch (err) {
-    console.error("updateTeacher error:", err);
-
-    if (err.code === 11000) {
-      const field = Object.keys(err.keyPattern)[0];
-      return res.status(400).json({
-        success: false,
-        message: `${field} already exists`
-      });
-    }
-
-    if (err.name === "ValidationError") {
-      const messages = Object.values(err.errors).map(e => e.message);
-      return res.status(400).json({
-        success: false,
-        message: messages.join(", ")
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to update teacher"
-    });
-  }
-};
-
-// ============================================
-// DELETE TEACHER (Soft Delete)
-// ============================================
-exports.deleteTeacher = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { id } = req.params;
-
-    const teacher = await Teacher.findOne({
-      _id: id,
-      schoolId,
-      isDeleted: false
-    });
-
-    if (!teacher) {
-      return res.status(404).json({
-        success: false,
-        message: "Teacher not found"
-      });
-    }
-
-    // Soft delete
-    teacher.isDeleted = true;
-    teacher.deletedAt = new Date();
-    teacher.deletedBy = userId;
-    teacher.status = "Inactive";
-    await teacher.save();
-
-    // Also soft delete assignments if exists
-    try {
-      await TeacherAssignment.updateOne(
-        { schoolId, teacher: id },
-        { isDeleted: true, deletedAt: new Date() }
-      );
-    } catch (err) {
-      console.error("Error deleting assignments:", err);
-    }
-
-    res.json({
-      success: true,
-      message: "Teacher deleted successfully",
-      data: { _id: id }
-    });
-  } catch (err) {
-    console.error("deleteTeacher error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to delete teacher"
-    });
-  }
-};
-
-// ============================================
-// GET STATISTICS
-// ============================================
-exports.getStatistics = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-
-    const stats = await Teacher.getSchoolStats(schoolId);
-
-    // Get department-wise count
-    const deptCounts = await Teacher.aggregate([
-      { 
-        $match: { 
-          schoolId,
-          isDeleted: false,
-          status: "Active",
-          department: { $exists: true, $ne: "" }
-        } 
-      },
-      { $group: { _id: "$department", count: { $sum: 1 } } },
-      { $sort: { count: -1 } }
-    ]);
-
-    // Get qualification distribution
-    const qualStats = await Teacher.aggregate([
-      { 
-        $match: { 
-          schoolId,
-          isDeleted: false,
-          status: "Active"
-        } 
-      },
-      { $unwind: "$qualifications" },
-      { $group: { _id: "$qualifications", count: { $sum: 1 } } },
-      { $sort: { count: -1 } }
-    ]);
-
-    res.json({
-      success: true,
-      data: {
-        ...stats,
-        departmentCounts: deptCounts,
-        qualificationStats: qualStats
-      }
-    });
-  } catch (err) {
-    console.error("getStatistics error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to get statistics"
-    });
-  }
-};
-
-// ============================================
-// BULK UPDATE STATUS
-// ============================================
-exports.bulkUpdateStatus = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { teacherIds, status, reason } = req.body;
-
-    if (!teacherIds || !Array.isArray(teacherIds) || teacherIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "teacherIds array is required"
-      });
-    }
-
-    if (!status) {
-      return res.status(400).json({
-        success: false,
-        message: "status is required"
-      });
-    }
-
-    // Update all teachers
-    const result = await Teacher.updateMany(
-      {
-        _id: { $in: teacherIds },
-        schoolId,
-        isDeleted: false
-      },
-      {
-        $set: { 
-          status,
-          updatedBy: userId
-        },
-        $push: {
-          statusHistory: {
-            status,
-            changedAt: new Date(),
-            changedBy: userId,
-            reason: reason || ""
-          }
-        }
-      }
-    );
-
-    res.json({
-      success: true,
-      message: `${result.modifiedCount} teachers updated successfully`,
-      count: result.modifiedCount
-    });
-  } catch (err) {
-    console.error("bulkUpdateStatus error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to update teachers"
-    });
-  }
-};
-
-// ============================================
-// BULK DELETE TEACHERS
-// ============================================
-exports.bulkDelete = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { teacherIds } = req.body;
-
-    if (!teacherIds || !Array.isArray(teacherIds) || teacherIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "teacherIds array is required"
-      });
-    }
-
-    // Soft delete all teachers
-    const result = await Teacher.updateMany(
-      {
-        _id: { $in: teacherIds },
-        schoolId,
-        isDeleted: false
-      },
-      {
-        $set: {
-          isDeleted: true,
-          deletedAt: new Date(),
-          deletedBy: userId,
-          status: "Inactive"
-        }
-      }
-    );
-
-    // Delete assignments
-    await TeacherAssignment.updateMany(
-      {
-        schoolId,
-        teacher: { $in: teacherIds }
-      },
-      {
-        $set: {
-          isDeleted: true,
-          deletedAt: new Date()
-        }
-      }
-    );
-
-    res.json({
-      success: true,
-      message: `${result.modifiedCount} teachers deleted successfully`,
-      count: result.modifiedCount
-    });
-  } catch (err) {
-    console.error("bulkDelete error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to delete teachers"
-    });
-  }
-};
-
-// ============================================
-// GET UNIQUE DEPARTMENTS
-// ============================================
-exports.getDepartments = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-
-    const departments = await Teacher.distinct("department", {
-      schoolId,
-      isDeleted: false,
-      department: { $exists: true, $ne: "" }
-    });
-
-    res.json({
-      success: true,
-      data: departments.sort()
-    });
-  } catch (err) {
-    console.error("getDepartments error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch departments"
-    });
   }
 };
