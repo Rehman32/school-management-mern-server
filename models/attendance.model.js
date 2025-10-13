@@ -1,3 +1,6 @@
+// ============================================
+// ATTENDANCE MODEL - MULTI-TENANT COMPATIBLE
+// ============================================
 
 const mongoose = require("mongoose");
 
@@ -7,24 +10,20 @@ const attendanceRecordSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId, 
     ref: "Student", 
     required: true,
-    index: true // ✅ NEW: Index for faster queries
+    index: true
   },
   status: { 
     type: String, 
-    enum: ["present", "absent", "late", "half-day", "excused", "leave"], // ✅ ENHANCED: More status options
+    enum: ["present", "absent", "late", "half-day", "excused", "leave"],
     required: true 
   },
-  checkInTime: { 
-    type: Date // ✅ NEW: Track exact check-in time
-  },
-  checkOutTime: { 
-    type: Date // ✅ NEW: Track check-out time for half-day
-  },
+  checkInTime: Date,
+  checkOutTime: Date,
   remark: { 
     type: String,
     maxlength: 500
   },
-  leaveType: { // ✅ NEW: For leave/excused absences
+  leaveType: {
     type: String,
     enum: ["sick", "emergency", "authorized", "other"]
   },
@@ -32,7 +31,7 @@ const attendanceRecordSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId, 
     ref: "User" 
   },
-  recordedAt: { // ✅ NEW: Exact time of marking
+  recordedAt: {
     type: Date,
     default: Date.now
   }
@@ -40,25 +39,33 @@ const attendanceRecordSchema = new mongoose.Schema({
 
 // Main Attendance Schema
 const AttendanceSchema = new mongoose.Schema({
+  // ===== TENANT RELATIONSHIP =====
+  tenantId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: "Tenant", 
+    required: [true, "Tenant ID is required"],
+    index: true 
+  },
+  // Keep schoolId for backward compatibility
   schoolId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: "School", 
-    required: true, 
-    index: true 
+    required: false
   },
+
+  // ===== CLASS & DATE =====
   classId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: "Class", 
-    required: true, 
+    required: [true, "Class is required"],
     index: true 
   },
   date: { 
     type: Date, 
-    required: true, 
+    required: [true, "Date is required"],
     index: true,
     validate: {
       validator: function(value) {
-        // ✅ NEW: Don't allow future dates
         const today = new Date();
         today.setHours(23, 59, 59, 999);
         return value <= today;
@@ -66,40 +73,47 @@ const AttendanceSchema = new mongoose.Schema({
       message: "Cannot mark attendance for future dates"
     }
   },
-  session: { // ✅ NEW: Support multiple sessions
+
+  // ===== SESSION =====
+  session: {
     type: String,
     enum: ["full-day", "morning", "afternoon"],
     default: "full-day"
   },
+
+  // ===== RECORDS =====
   records: { 
     type: [attendanceRecordSchema], 
     default: [],
     validate: {
       validator: function(records) {
-        // ✅ NEW: Prevent duplicate students
         const studentIds = records.map(r => r.student.toString());
         return studentIds.length === new Set(studentIds).size;
       },
       message: "Duplicate student records not allowed"
     }
   },
-  totalStudents: { // ✅ NEW: Cache for performance
+
+  // ===== CACHED COUNTS =====
+  totalStudents: { 
     type: Number,
     default: 0
   },
-  presentCount: { // ✅ NEW: Cache for performance
+  presentCount: {
     type: Number,
     default: 0
   },
-  absentCount: { // ✅ NEW: Cache for performance
+  absentCount: {
     type: Number,
     default: 0
   },
-  lateCount: { // ✅ NEW: Cache for performance
+  lateCount: {
     type: Number,
     default: 0
   },
-  isLocked: { // ✅ NEW: Prevent accidental changes after review
+
+  // ===== LOCK MECHANISM =====
+  isLocked: {
     type: Boolean,
     default: false
   },
@@ -108,7 +122,11 @@ const AttendanceSchema = new mongoose.Schema({
     ref: "User"
   },
   lockedAt: Date,
-  notes: String, // ✅ NEW: General notes for the day
+
+  // ===== NOTES =====
+  notes: String,
+
+  // ===== AUDIT =====
   createdBy: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: "User" 
@@ -121,44 +139,39 @@ const AttendanceSchema = new mongoose.Schema({
   timestamps: true 
 });
 
-// ============================================
-// INDEXES FOR PERFORMANCE
-// ============================================
-AttendanceSchema.index({ schoolId: 1, classId: 1, date: 1 }, { unique: true });
-AttendanceSchema.index({ schoolId: 1, date: 1 });
-AttendanceSchema.index({ "records.student": 1, date: 1 }); // ✅ NEW: For student reports
+// ===== INDEXES =====
+AttendanceSchema.index({ tenantId: 1, classId: 1, date: 1 }, { unique: true });
+AttendanceSchema.index({ tenantId: 1, date: 1 });
+AttendanceSchema.index({ "records.student": 1, date: 1 });
 
-// ============================================
-// MIDDLEWARE - AUTO-UPDATE COUNTS
-// ============================================
+// ===== PRE-SAVE HOOK =====
 AttendanceSchema.pre("save", function(next) {
+  // Backward compatibility
+  if (this.schoolId && !this.tenantId) {
+    this.tenantId = this.schoolId;
+  }
+
   // Auto-calculate counts
   this.totalStudents = this.records.length;
   this.presentCount = this.records.filter(r => r.status === "present").length;
   this.absentCount = this.records.filter(r => r.status === "absent").length;
   this.lateCount = this.records.filter(r => r.status === "late").length;
+  
   next();
 });
 
-// ============================================
-// VIRTUAL FIELDS
-// ============================================
+// ===== VIRTUAL FIELDS =====
 AttendanceSchema.virtual("attendancePercentage").get(function() {
   if (this.totalStudents === 0) return 0;
   return ((this.presentCount / this.totalStudents) * 100).toFixed(2);
 });
 
-// Enable virtuals in JSON
 AttendanceSchema.set("toJSON", { virtuals: true });
 AttendanceSchema.set("toObject", { virtuals: true });
 
-// ============================================
-// STATIC METHODS
-// ============================================
-
-// Get attendance statistics for a class
-AttendanceSchema.statics.getClassStats = async function(schoolId, classId, startDate, endDate) {
-  const match = { schoolId, classId };
+// ===== STATIC METHODS =====
+AttendanceSchema.statics.getClassStats = async function(tenantId, classId, startDate, endDate) {
+  const match = { tenantId, classId };
   
   if (startDate && endDate) {
     match.date = { 
@@ -190,9 +203,8 @@ AttendanceSchema.statics.getClassStats = async function(schoolId, classId, start
   };
 };
 
-// Get student attendance summary
-AttendanceSchema.statics.getStudentStats = async function(schoolId, studentId, startDate, endDate) {
-  const match = { schoolId };
+AttendanceSchema.statics.getStudentStats = async function(tenantId, studentId, startDate, endDate) {
+  const match = { tenantId };
   
   if (startDate && endDate) {
     match.date = { 
@@ -206,7 +218,7 @@ AttendanceSchema.statics.getStudentStats = async function(schoolId, studentId, s
     { $unwind: "$records" },
     { 
       $match: { 
-        "records.student": new mongoose.Types.ObjectId(studentId) // ✅ FIXED: Proper syntax
+        "records.student": new mongoose.Types.ObjectId(studentId)
       } 
     },
     {

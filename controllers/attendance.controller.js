@@ -1,3 +1,7 @@
+// ============================================
+// ATTENDANCE CONTROLLER - MULTI-TENANT
+// Production-Ready Version
+// ============================================
 
 const Attendance = require("../models/attendance.model");
 const Student = require("../models/student.model");
@@ -24,11 +28,12 @@ const validateAttendanceDate = (date) => {
 // ============================================
 // HELPER: Validate Students Belong to Class
 // ============================================
-const validateStudentsInClass = async (schoolId, classId, studentIds) => {
+const validateStudentsInClass = async (tenantId, classId, studentIds) => {
   const students = await Student.find({
     _id: { $in: studentIds },
-    schoolId,
-    class: classId
+    tenantId,
+    class: classId,
+    isDeleted: false
   });
   
   if (students.length !== studentIds.length) {
@@ -48,8 +53,16 @@ const validateStudentsInClass = async (schoolId, classId, studentIds) => {
 // ============================================
 exports.markAttendance = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
     const { classId, date, records, session, notes } = req.body;
     
     // Validation
@@ -70,7 +83,11 @@ exports.markAttendance = async (req, res) => {
     }
     
     // Validate class exists
-    const classExists = await Class.findOne({ _id: classId, schoolId });
+    const classExists = await Class.findOne({ 
+      _id: classId, 
+      tenantId,
+      isDeleted: false 
+    });
     if (!classExists) {
       return res.status(404).json({
         success: false,
@@ -80,7 +97,7 @@ exports.markAttendance = async (req, res) => {
     
     // Validate students belong to class
     const studentIds = records.map(r => r.studentId);
-    const studentValidation = await validateStudentsInClass(schoolId, classId, studentIds);
+    const studentValidation = await validateStudentsInClass(tenantId, classId, studentIds);
     if (!studentValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -103,7 +120,7 @@ exports.markAttendance = async (req, res) => {
     // Upsert attendance document
     const attendance = await Attendance.findOneAndUpdate(
       { 
-        schoolId, 
+        tenantId,
         classId, 
         date: dateValidation.date 
       },
@@ -115,7 +132,8 @@ exports.markAttendance = async (req, res) => {
           updatedBy: userId 
         },
         $setOnInsert: { 
-          createdBy: userId 
+          createdBy: userId,
+          schoolId: tenantId  // Backward compatibility
         }
       },
       { 
@@ -160,8 +178,16 @@ exports.markAttendance = async (req, res) => {
 // ============================================
 exports.markAllPresent = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
     const { classId, date, session } = req.body;
     
     if (!classId || !date) {
@@ -182,9 +208,10 @@ exports.markAllPresent = async (req, res) => {
     
     // Get all students in class
     const students = await Student.find({ 
-      schoolId, 
+      tenantId,
       class: classId,
-      status: "active"
+      status: "active",
+      isDeleted: false
     });
     
     if (students.length === 0) {
@@ -205,14 +232,17 @@ exports.markAllPresent = async (req, res) => {
     
     // Upsert attendance
     const attendance = await Attendance.findOneAndUpdate(
-      { schoolId, classId, date: dateValidation.date },
+      { tenantId, classId, date: dateValidation.date },
       { 
         $set: { 
           records,
           session: session || "full-day",
           updatedBy: userId 
         },
-        $setOnInsert: { createdBy: userId }
+        $setOnInsert: { 
+          createdBy: userId,
+          schoolId: tenantId
+        }
       },
       { new: true, upsert: true, runValidators: true }
     );
@@ -241,8 +271,16 @@ exports.markAllPresent = async (req, res) => {
 // ============================================
 exports.copyFromPreviousDay = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
     const { classId, date } = req.body;
     
     if (!classId || !date) {
@@ -266,7 +304,7 @@ exports.copyFromPreviousDay = async (req, res) => {
     previousDate.setDate(previousDate.getDate() - 1);
     
     const previousAttendance = await Attendance.findOne({
-      schoolId,
+      tenantId,
       classId,
       date: previousDate
     });
@@ -288,14 +326,17 @@ exports.copyFromPreviousDay = async (req, res) => {
     
     // Create new attendance
     const attendance = await Attendance.findOneAndUpdate(
-      { schoolId, classId, date: dateValidation.date },
+      { tenantId, classId, date: dateValidation.date },
       {
         $set: {
           records: copiedRecords,
           session: previousAttendance.session,
           updatedBy: userId
         },
-        $setOnInsert: { createdBy: userId }
+        $setOnInsert: { 
+          createdBy: userId,
+          schoolId: tenantId
+        }
       },
       { new: true, upsert: true, runValidators: true }
     );
@@ -324,7 +365,15 @@ exports.copyFromPreviousDay = async (req, res) => {
 // ============================================
 exports.listAttendance = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
     const { 
       classId, 
       date, 
@@ -334,7 +383,7 @@ exports.listAttendance = async (req, res) => {
       limit = 30
     } = req.query;
     
-    const filter = { schoolId };
+    const filter = { tenantId };
     
     if (classId) filter.classId = classId;
     
@@ -358,7 +407,8 @@ exports.listAttendance = async (req, res) => {
         .limit(parseInt(limit))
         .populate("records.student", "fullName rollNumber email")
         .populate("classId", "grade section name")
-        .populate("createdBy updatedBy", "name"),
+        .populate("createdBy updatedBy", "name")
+        .lean(),
       Attendance.countDocuments(filter)
     ]);
     
@@ -383,11 +433,204 @@ exports.listAttendance = async (req, res) => {
 };
 
 // ============================================
+// GET ATTENDANCE BY ID
+// ============================================
+exports.getAttendanceById = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
+    const attendance = await Attendance.findOne({ 
+      _id: req.params.id, 
+      tenantId
+    })
+    .populate("records.student", "fullName rollNumber email")
+    .populate("classId", "name grade section")
+    .populate("createdBy updatedBy", "name email");
+    
+    if (!attendance) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Attendance not found" 
+      });
+    }
+    
+    return res.json({ 
+      success: true, 
+      data: attendance 
+    });
+    
+  } catch (err) {
+    console.error("getAttendanceById error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: err.message || "Failed to fetch attendance"
+    });
+  }
+};
+
+// ============================================
+// UPDATE ATTENDANCE RECORD
+// ============================================
+exports.updateAttendanceRecord = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
+    const { studentId, status, remark, checkInTime, checkOutTime } = req.body;
+    
+    if (!studentId || !status) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "studentId and status required" 
+      });
+    }
+    
+    const attendance = await Attendance.findOne({ 
+      _id: req.params.id, 
+      tenantId
+    });
+    
+    if (!attendance) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Attendance not found" 
+      });
+    }
+    
+    // Check if locked
+    if (attendance.isLocked) {
+      return res.status(400).json({
+        success: false,
+        message: "Attendance is locked and cannot be modified"
+      });
+    }
+    
+    // Find and update student record
+    const recordIndex = attendance.records.findIndex(
+      r => r.student.toString() === studentId
+    );
+    
+    if (recordIndex >= 0) {
+      attendance.records[recordIndex].status = status;
+      attendance.records[recordIndex].remark = remark;
+      attendance.records[recordIndex].checkInTime = checkInTime ? new Date(checkInTime) : null;
+      attendance.records[recordIndex].checkOutTime = checkOutTime ? new Date(checkOutTime) : null;
+      attendance.records[recordIndex].recordedBy = userId;
+      attendance.records[recordIndex].recordedAt = new Date();
+    } else {
+      // Add new record
+      attendance.records.push({
+        student: studentId,
+        status,
+        remark,
+        checkInTime: checkInTime ? new Date(checkInTime) : null,
+        checkOutTime: checkOutTime ? new Date(checkOutTime) : null,
+        recordedBy: userId,
+        recordedAt: new Date()
+      });
+    }
+    
+    attendance.updatedBy = userId;
+    await attendance.save();
+    
+    const populated = await Attendance.findById(attendance._id)
+      .populate("records.student", "fullName rollNumber")
+      .populate("classId", "name grade section");
+    
+    return res.json({ 
+      success: true, 
+      data: populated,
+      message: "Attendance record updated successfully"
+    });
+    
+  } catch (err) {
+    console.error("updateAttendanceRecord error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: err.message || "Failed to update record"
+    });
+  }
+};
+
+// ============================================
+// DELETE ATTENDANCE
+// ============================================
+exports.deleteAttendance = async (req, res) => {
+  try {
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+    
+    const attendance = await Attendance.findOne({ 
+      _id: req.params.id, 
+      tenantId
+    });
+    
+    if (!attendance) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Attendance not found" 
+      });
+    }
+    
+    // Check if locked
+    if (attendance.isLocked) {
+      return res.status(400).json({
+        success: false,
+        message: "Attendance is locked and cannot be deleted"
+      });
+    }
+    
+    await Attendance.findByIdAndDelete(req.params.id);
+    
+    return res.json({ 
+      success: true, 
+      message: "Attendance deleted successfully",
+      data: { _id: req.params.id }
+    });
+    
+  } catch (err) {
+    console.error("deleteAttendance error:", err);
+    return res.status(500).json({ 
+      success: false, 
+      message: err.message || "Failed to delete attendance"
+    });
+  }
+};
+
+// ============================================
 // GET CLASS REPORT
 // ============================================
 exports.getClassReport = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { classId } = req.params;
     const { startDate, endDate } = req.query;
     
@@ -398,7 +641,7 @@ exports.getClassReport = async (req, res) => {
       });
     }
     
-    const match = { schoolId, classId };
+    const match = { tenantId, classId };
     
     if (startDate && endDate) {
       match.date = { 
@@ -475,7 +718,7 @@ exports.getClassReport = async (req, res) => {
     
     // Get overall class statistics
     const classStats = await Attendance.getClassStats(
-      schoolId, 
+      tenantId,
       classId, 
       startDate, 
       endDate
@@ -503,7 +746,15 @@ exports.getClassReport = async (req, res) => {
 // ============================================
 exports.getStudentReport = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { studentId } = req.params;
     const { startDate, endDate } = req.query;
     
@@ -523,14 +774,14 @@ exports.getStudentReport = async (req, res) => {
     }
     
     const summary = await Attendance.getStudentStats(
-      schoolId,
+      tenantId,
       studentId,
       startDate,
       endDate
     );
     
     // Get detailed records
-    const match = { schoolId };
+    const match = { tenantId };
     
     if (startDate && endDate) {
       match.date = {
@@ -577,173 +828,19 @@ exports.getStudentReport = async (req, res) => {
 };
 
 // ============================================
-// GET ATTENDANCE BY ID
-// ============================================
-exports.getAttendanceById = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    const attendance = await Attendance.findOne({ 
-      _id: req.params.id, 
-      schoolId 
-    })
-    .populate("records.student", "fullName rollNumber email")
-    .populate("classId", "name grade section")
-    .populate("createdBy updatedBy", "name email");
-    
-    if (!attendance) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Attendance not found" 
-      });
-    }
-    
-    return res.json({ 
-      success: true, 
-      data: attendance 
-    });
-    
-  } catch (err) {
-    console.error("getAttendanceById error:", err);
-    return res.status(500).json({ 
-      success: false, 
-      message: err.message || "Failed to fetch attendance"
-    });
-  }
-};
-
-// ============================================
-// UPDATE ATTENDANCE RECORD
-// ============================================
-exports.updateAttendanceRecord = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
-    const { studentId, status, remark, checkInTime, checkOutTime } = req.body;
-    
-    if (!studentId || !status) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "studentId and status required" 
-      });
-    }
-    
-    const attendance = await Attendance.findOne({ 
-      _id: req.params.id, 
-      schoolId 
-    });
-    
-    if (!attendance) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Attendance not found" 
-      });
-    }
-    
-    // Check if locked
-    if (attendance.isLocked) {
-      return res.status(400).json({
-        success: false,
-        message: "Attendance is locked and cannot be modified"
-      });
-    }
-    
-    // Find and update student record
-    const recordIndex = attendance.records.findIndex(
-      r => r.student.toString() === studentId
-    );
-    
-    if (recordIndex >= 0) {
-      attendance.records[recordIndex].status = status;
-      attendance.records[recordIndex].remark = remark;
-      attendance.records[recordIndex].checkInTime = checkInTime ? new Date(checkInTime) : null;
-      attendance.records[recordIndex].checkOutTime = checkOutTime ? new Date(checkOutTime) : null;
-      attendance.records[recordIndex].recordedBy = userId;
-      attendance.records[recordIndex].recordedAt = new Date();
-    } else {
-      // Add new record
-      attendance.records.push({
-        student: studentId,
-        status,
-        remark,
-        checkInTime: checkInTime ? new Date(checkInTime) : null,
-        checkOutTime: checkOutTime ? new Date(checkOutTime) : null,
-        recordedBy: userId,
-        recordedAt: new Date()
-      });
-    }
-    
-    attendance.updatedBy = userId;
-    await attendance.save();
-    
-    const populated = await Attendance.findById(attendance._id)
-      .populate("records.student", "fullName rollNumber")
-      .populate("classId", "name grade section");
-    
-    return res.json({ 
-      success: true, 
-      data: populated,
-      message: "Attendance record updated successfully"
-    });
-    
-  } catch (err) {
-    console.error("updateAttendanceRecord error:", err);
-    return res.status(500).json({ 
-      success: false, 
-      message: err.message || "Failed to update record"
-    });
-  }
-};
-
-// ============================================
-// DELETE ATTENDANCE
-// ============================================
-exports.deleteAttendance = async (req, res) => {
-  try {
-    const schoolId = req.user.schoolId;
-    
-    const attendance = await Attendance.findOne({ 
-      _id: req.params.id, 
-      schoolId 
-    });
-    
-    if (!attendance) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "Attendance not found" 
-      });
-    }
-    
-    // Check if locked
-    if (attendance.isLocked) {
-      return res.status(400).json({
-        success: false,
-        message: "Attendance is locked and cannot be deleted"
-      });
-    }
-    
-    await Attendance.findByIdAndDelete(req.params.id);
-    
-    return res.json({ 
-      success: true, 
-      message: "Attendance deleted successfully",
-      data: { _id: req.params.id }
-    });
-    
-  } catch (err) {
-    console.error("deleteAttendance error:", err);
-    return res.status(500).json({ 
-      success: false, 
-      message: err.message || "Failed to delete attendance"
-    });
-  }
-};
-
-// ============================================
 // GET MONTHLY STATISTICS
 // ============================================
 exports.getMonthlyStats = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { classId, month, year } = req.query;
     
     if (!month || !year) {
@@ -757,7 +854,7 @@ exports.getMonthlyStats = async (req, res) => {
     const endDate = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59, 999);
     
     const match = {
-      schoolId,
+      tenantId,
       date: { $gte: startDate, $lte: endDate }
     };
     
@@ -795,4 +892,4 @@ exports.getMonthlyStats = async (req, res) => {
       message: err.message || "Failed to get monthly statistics"
     });
   }
-};
+}
