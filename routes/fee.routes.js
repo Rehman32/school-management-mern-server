@@ -5,12 +5,12 @@
 
 const express = require("express");
 const router = express.Router();
-const { protect, authorize } = require("../middlewares/auth.middleware");
+const { protect, authorize,injectTenant } = require("../middlewares/auth.middleware");
 const feeCtrl = require("../controllers/fee.controller");
 
 // Apply authentication to all routes
 router.use(protect);
-
+router.use(injectTenant);
 // ============================================
 // FEE CRUD OPERATIONS
 // ============================================

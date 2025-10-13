@@ -1,15 +1,12 @@
 // ============================================
-// ENHANCED FEE CONTROLLER
-// Fixed and Enhanced for Real School Management
+// FEE CONTROLLER - MULTI-TENANT (COMPLETE)
 // ============================================
 
 const Fee = require("../models/fee.model");
 const Student = require("../models/student.model");
 const Class = require("../models/class.model");
 
-// ============================================
-// HELPER: Validate Amount
-// ============================================
+// Validation helper
 const validateAmount = (amount) => {
   const num = parseFloat(amount);
   return !isNaN(num) && num > 0;
@@ -20,10 +17,18 @@ const validateAmount = (amount) => {
 // ============================================
 exports.createFee = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     let studentId;
 
-    // Validate amount
     if (!validateAmount(req.body.amount)) {
       return res.status(400).json({ 
         success: false, 
@@ -31,11 +36,9 @@ exports.createFee = async (req, res) => {
       });
     }
 
-    // Student role: use their own _id
     if (req.user.role === "student") {
       studentId = req.user._id;
     } else {
-      // Admin/teacher: must provide student in body
       studentId = req.body.student;
       if (!studentId) {
         return res.status(400).json({ 
@@ -44,8 +47,12 @@ exports.createFee = async (req, res) => {
         });
       }
       
-      // Validate student exists and belongs to this school
-      const studentExists = await Student.findOne({ _id: studentId, schoolId });
+      const studentExists = await Student.findOne({ 
+        _id: studentId, 
+        tenantId,
+        isDeleted: false
+      });
+
       if (!studentExists) {
         return res.status(400).json({ 
           success: false, 
@@ -54,7 +61,6 @@ exports.createFee = async (req, res) => {
       }
     }
 
-    // Validate due date
     if (req.body.dueDate && new Date(req.body.dueDate) < new Date(new Date().setHours(0, 0, 0, 0))) {
       return res.status(400).json({
         success: false,
@@ -65,9 +71,10 @@ exports.createFee = async (req, res) => {
     const payload = {
       ...req.body,
       student: studentId,
-      schoolId,
-      createdBy: req.user._id,
-      updatedBy: req.user._id,
+      tenantId,
+      schoolId: tenantId,
+      createdBy: userId,
+      updatedBy: userId,
       paidAmount: 0
     };
 
@@ -103,11 +110,19 @@ exports.createFee = async (req, res) => {
 };
 
 // ============================================
-// LIST FEES (with advanced filtering)
+// LIST FEES
 // ============================================
 exports.listFees = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { 
       status, 
       feeType, 
@@ -120,10 +135,8 @@ exports.listFees = async (req, res) => {
       limit = 50
     } = req.query;
 
-    // Build query
-    const query = { schoolId };
+    const query = { tenantId };
 
-    // Role-based access: students can only see their own fees
     if (req.user.role === "student") {
       query.student = req.user._id;
     } else if (student) {
@@ -135,14 +148,12 @@ exports.listFees = async (req, res) => {
     if (month) query.month = month;
     if (academicYear) query.academicYear = academicYear;
     
-    // Date range filter
     if (dateFrom || dateTo) {
       query.dueDate = {};
       if (dateFrom) query.dueDate.$gte = new Date(dateFrom);
       if (dateTo) query.dueDate.$lte = new Date(dateTo);
     }
 
-    // Execute query with pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
     const [fees, total] = await Promise.all([
@@ -152,7 +163,8 @@ exports.listFees = async (req, res) => {
         .populate("updatedBy", "name")
         .sort({ dueDate: -1, createdAt: -1 })
         .skip(skip)
-        .limit(parseInt(limit)),
+        .limit(parseInt(limit))
+        .lean(),
       Fee.countDocuments(query)
     ]);
 
@@ -181,19 +193,24 @@ exports.listFees = async (req, res) => {
 // ============================================
 exports.getStatistics = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const filters = {};
-    
-    // Add filters from query
     if (req.query.feeType) filters.feeType = req.query.feeType;
     if (req.query.month) filters.month = req.query.month;
     if (req.query.academicYear) filters.academicYear = req.query.academicYear;
     
-    const stats = await Fee.getSchoolStats(schoolId, filters);
+    const stats = await Fee.getSchoolStats(tenantId, filters);
     
-    // Get count by status
     const statusCounts = await Fee.aggregate([
-      { $match: { schoolId, ...filters } },
+      { $match: { tenantId, ...filters } },
       { $group: { _id: "$status", count: { $sum: 1 } } }
     ]);
     
@@ -224,10 +241,18 @@ exports.getStatistics = async (req, res) => {
 // ============================================
 exports.updateFee = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { id } = req.params;
     
-    // Validate amount if provided
     if (req.body.amount && !validateAmount(req.body.amount)) {
       return res.status(400).json({ 
         success: false, 
@@ -235,8 +260,7 @@ exports.updateFee = async (req, res) => {
       });
     }
     
-    // Find existing fee
-    const existing = await Fee.findOne({ _id: id, schoolId });
+    const existing = await Fee.findOne({ _id: id, tenantId });
     if (!existing) {
       return res.status(404).json({ 
         success: false, 
@@ -246,10 +270,10 @@ exports.updateFee = async (req, res) => {
     
     const update = { 
       ...req.body, 
-      updatedBy: req.user._id 
+      updatedBy: userId 
     };
     
-    // Don't allow updating certain fields
+    delete update.tenantId;
     delete update.schoolId;
     delete update.paymentRecords;
     delete update.paidAmount;
@@ -293,11 +317,19 @@ exports.updateFee = async (req, res) => {
 // ============================================
 exports.recordPayment = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { id } = req.params;
     const { amount, method, transactionId, notes } = req.body;
     
-    // Validate amount
     if (!validateAmount(amount)) {
       return res.status(400).json({ 
         success: false, 
@@ -305,8 +337,7 @@ exports.recordPayment = async (req, res) => {
       });
     }
     
-    // Find fee
-    const fee = await Fee.findOne({ _id: id, schoolId });
+    const fee = await Fee.findOne({ _id: id, tenantId });
     if (!fee) {
       return res.status(404).json({ 
         success: false, 
@@ -314,7 +345,6 @@ exports.recordPayment = async (req, res) => {
       });
     }
     
-    // Check if payment exceeds balance
     const balance = fee.amount + fee.lateFee - fee.discount - fee.paidAmount;
     if (parseFloat(amount) > balance) {
       return res.status(400).json({
@@ -323,19 +353,18 @@ exports.recordPayment = async (req, res) => {
       });
     }
     
-    // Add payment record
     fee.paymentRecords.push({
       amount: parseFloat(amount),
       date: new Date(),
       method: method || "cash",
       transactionId,
       notes,
-      receivedBy: req.user._id
+      receivedBy: userId
     });
     
-    fee.updatedBy = req.user._id;
+    fee.updatedBy = userId;
     
-    await fee.save(); // This triggers the pre-save middleware to update status
+    await fee.save();
     
     await fee.populate([
       { path: "student", select: "fullName rollNumber class" },
@@ -362,10 +391,17 @@ exports.recordPayment = async (req, res) => {
 // ============================================
 exports.getStudentFees = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { studentId } = req.params;
     
-    // Authorization check
     if (req.user.role === "student" && req.user._id.toString() !== studentId) {
       return res.status(403).json({
         success: false,
@@ -373,7 +409,7 @@ exports.getStudentFees = async (req, res) => {
       });
     }
     
-    const fees = await Fee.getStudentFees(schoolId, studentId);
+    const fees = await Fee.getStudentFees(tenantId, studentId);
     
     return res.json({
       success: true,
@@ -390,11 +426,20 @@ exports.getStudentFees = async (req, res) => {
 };
 
 // ============================================
-// BULK GENERATE FEES
+// BULK GENERATE FEES (FIXED)
 // ============================================
 exports.bulkGenerateFees = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+    const userId = req.user?._id;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { 
       classId, 
       amount, 
@@ -405,7 +450,6 @@ exports.bulkGenerateFees = async (req, res) => {
       notes
     } = req.body;
     
-    // Validate required fields
     if (!classId || !amount || !dueDate) {
       return res.status(400).json({
         success: false,
@@ -420,20 +464,37 @@ exports.bulkGenerateFees = async (req, res) => {
       });
     }
     
-    // Get all students in the class
-    const students = await Student.find({ schoolId, class: classId });
+    const classExists = await Class.findOne({ 
+      _id: classId, 
+      tenantId,
+      isDeleted: false 
+    });
+    
+    if (!classExists) {
+      return res.status(404).json({
+        success: false,
+        message: "Class not found"
+      });
+    }
+    
+    const students = await Student.find({ 
+      tenantId,
+      class: classId,
+      status: "active",
+      isDeleted: false
+    });
     
     if (students.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "No students found in this class"
+        message: "No active students found in this class"
       });
     }
     
-    // Create fee records for all students
     const feePromises = students.map(student => 
       Fee.create({
-        schoolId,
+        tenantId,
+        schoolId: tenantId,
         student: student._id,
         amount: parseFloat(amount),
         feeType: feeType || "tuition",
@@ -441,8 +502,8 @@ exports.bulkGenerateFees = async (req, res) => {
         month,
         academicYear,
         notes,
-        createdBy: req.user._id,
-        updatedBy: req.user._id
+        createdBy: userId,
+        updatedBy: userId
       })
     );
     
@@ -456,6 +517,15 @@ exports.bulkGenerateFees = async (req, res) => {
     
   } catch (err) {
     console.error("bulkGenerateFees error:", err);
+    
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({
+        success: false,
+        message: messages.join(", ")
+      });
+    }
+    
     return res.status(500).json({ 
       success: false, 
       message: err.message || "Server error" 
@@ -468,10 +538,18 @@ exports.bulkGenerateFees = async (req, res) => {
 // ============================================
 exports.deleteFee = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { id } = req.params;
     
-    const fee = await Fee.findOne({ _id: id, schoolId });
+    const fee = await Fee.findOne({ _id: id, tenantId });
     
     if (!fee) {
       return res.status(404).json({ 
@@ -480,7 +558,6 @@ exports.deleteFee = async (req, res) => {
       });
     }
     
-    // Don't allow deleting paid fees (for audit trail)
     if (fee.status === "paid" && fee.paymentRecords.length > 0) {
       return res.status(400).json({
         success: false,
@@ -510,10 +587,18 @@ exports.deleteFee = async (req, res) => {
 // ============================================
 exports.deletePayment = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
+    const tenantId = req.user?.tenantId || req.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: "Tenant ID is required"
+      });
+    }
+
     const { id, paymentId } = req.params;
     
-    const fee = await Fee.findOne({ _id: id, schoolId });
+    const fee = await Fee.findOne({ _id: id, tenantId });
     if (!fee) {
       return res.status(404).json({ 
         success: false, 
@@ -521,13 +606,12 @@ exports.deletePayment = async (req, res) => {
       });
     }
     
-    // Remove payment record
     fee.paymentRecords = fee.paymentRecords.filter(
       p => p._id.toString() !== paymentId
     );
     
     fee.updatedBy = req.user._id;
-    await fee.save(); // Triggers status recalculation
+    await fee.save();
     
     return res.json({
       success: true,
