@@ -1,9 +1,9 @@
 const mongoose = require("mongoose");
 
 /**
- * BaseService
- * Generic service for Mongoose models with multi-tenant support.
- * All methods accept an options object (e.g., { tenant }) for tenant-aware queries.
+ * BaseService - SINGLE-TENANT EDITION
+ * Generic service for Mongoose models.
+ * Simplified version without multi-tenant support.
  */
 class BaseService {
   /**
@@ -22,7 +22,7 @@ class BaseService {
   /**
    * Create a new document.
    * @param {Object} data - Document data.
-   * @param {Object} [opts] - Options (e.g., { tenant, session }).
+   * @param {Object} [opts] - Options (e.g., { session }).
    * @returns {Promise<Object>} The created document (plain object).
    */
   async create(data, opts = {}) {
@@ -30,7 +30,6 @@ class BaseService {
       throw new Error("Data must be a non-empty object.");
     }
     try {
-      if (opts.tenant) data.schoolId = opts.tenant;
       const doc = await this.Model.create([data], opts.session ? { session: opts.session } : {});
       return doc[0].toObject();
     } catch (err) {
@@ -41,7 +40,7 @@ class BaseService {
   /**
    * Find documents matching a query.
    * @param {Object} [query] - Mongoose query object.
-   * @param {Object} [opts] - Options (e.g., { tenant, projection, sort, limit, skip }).
+   * @param {Object} [opts] - Options (e.g., { projection, sort, limit, skip }).
    * @returns {Promise<Object[]>} Array of plain objects.
    */
   async find(query = {}, opts = {}) {
@@ -49,9 +48,7 @@ class BaseService {
       throw new Error("Query must be an object.");
     }
     try {
-      const q = { ...query };
-      if (opts.tenant) q.schoolId = opts.tenant;
-      let cursor = this.Model.find(q);
+      let cursor = this.Model.find(query);
 
       if (opts.projection) cursor = cursor.select(opts.projection);
       if (opts.sort) cursor = cursor.sort(opts.sort);
@@ -67,7 +64,7 @@ class BaseService {
   /**
    * Find a single document matching a query.
    * @param {Object} [query] - Mongoose query object.
-   * @param {Object} [opts] - Options (e.g., { tenant, projection }).
+   * @param {Object} [opts] - Options (e.g., { projection }).
    * @returns {Promise<Object|null>} The found document or null.
    */
   async findOne(query = {}, opts = {}) {
@@ -75,9 +72,7 @@ class BaseService {
       throw new Error("Query must be an object.");
     }
     try {
-      const q = { ...query };
-      if (opts.tenant) q.schoolId = opts.tenant;
-      let cursor = this.Model.findOne(q);
+      let cursor = this.Model.findOne(query);
       if (opts.projection) cursor = cursor.select(opts.projection);
       return await cursor.lean().exec();
     } catch (err) {
@@ -88,7 +83,7 @@ class BaseService {
   /**
    * Find a document by its ID.
    * @param {string|mongoose.Types.ObjectId} id - Document ID.
-   * @param {Object} [opts] - Options (e.g., { tenant, projection }).
+   * @param {Object} [opts] - Options (e.g., { projection }).
    * @returns {Promise<Object|null>} The found document or null.
    */
   async findById(id, opts = {}) {
@@ -96,9 +91,7 @@ class BaseService {
       throw new Error("A valid id must be provided.");
     }
     try {
-      const q = { _id: id };
-      if (opts.tenant) q.schoolId = opts.tenant;
-      let cursor = this.Model.findOne(q);
+      let cursor = this.Model.findById(id);
       if (opts.projection) cursor = cursor.select(opts.projection);
       return await cursor.lean().exec();
     } catch (err) {
@@ -110,7 +103,7 @@ class BaseService {
    * Update a document by its ID.
    * @param {string|mongoose.Types.ObjectId} id - Document ID.
    * @param {Object} data - Update data.
-   * @param {Object} [opts] - Options (e.g., { tenant, session }).
+   * @param {Object} [opts] - Options (e.g., { session }).
    * @returns {Promise<Object>} The updated document (plain object).
    */
   async updateById(id, data, opts = {}) {
@@ -121,9 +114,7 @@ class BaseService {
       throw new Error("Data must be a non-empty object.");
     }
     try {
-      const q = { _id: id };
-      if (opts.tenant) q.schoolId = opts.tenant;
-      const doc = await this.Model.findOneAndUpdate(q, data, {
+      const doc = await this.Model.findByIdAndUpdate(id, data, {
         new: true,
         ...(opts.session && { session: opts.session }),
       }).lean();
@@ -137,7 +128,7 @@ class BaseService {
   /**
    * Delete a document by its ID.
    * @param {string|mongoose.Types.ObjectId} id - Document ID.
-   * @param {Object} [opts] - Options (e.g., { tenant, session }).
+   * @param {Object} [opts] - Options (e.g., { session }).
    * @returns {Promise<Object>} The deleted document (plain object).
    */
   async deleteById(id, opts = {}) {
@@ -145,9 +136,7 @@ class BaseService {
       throw new Error("A valid id must be provided.");
     }
     try {
-      const q = { _id: id };
-      if (opts.tenant) q.schoolId = opts.tenant;
-      const doc = await this.Model.findOneAndDelete(q, opts.session ? { session: opts.session } : {}).lean();
+      const doc = await this.Model.findByIdAndDelete(id, opts.session ? { session: opts.session } : {}).lean();
       if (!doc) throw new Error("Document not found for deletion.");
       return doc;
     } catch (err) {

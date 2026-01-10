@@ -1,4 +1,4 @@
-//student.service.js
+//student.service.js - SINGLE-TENANT EDITION
 import BaseService from '../services/base.service.js';
 import Student from '../models/student.model.js';
 
@@ -8,17 +8,11 @@ class StudentService extends BaseService {
     }
 
     async findByClass(classId, options = {}) {
-        const { tenant, ...restOptions } = options;
-        if (!tenant) {
-            throw new Error('Tenant is required');
-        }
-        return this.model.find({ classId, ...restOptions })
-            .byTenant(tenant)
-            .lean();
+        return this.model.find({ classId, ...options }).lean();
     }
 
     async createStudent(data, options = {}) {
-        const requiredFields = ['firstName', 'lastName', 'classId', 'schoolId'];
+        const requiredFields = ['firstName', 'lastName', 'classId'];
         for (const field of requiredFields) {
             if (!data[field]) {
                 throw new Error(`${field} is required`);

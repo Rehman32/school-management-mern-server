@@ -1,4 +1,4 @@
-//  teacherAssignment.model.js
+//  teacherAssignment.model.js - SINGLE-TENANT EDITION
 
 const mongoose = require("mongoose");
 
@@ -51,54 +51,39 @@ const AssignmentSchema = new mongoose.Schema({
     required: true,
   },
   
-  // Assignment Type
   assignmentType: {
     type: String,
     enum: ["primary", "substitute", "support", "co-teacher"],
     default: "primary",
   },
 
-  // Schedule/Timetable
   periods: [PeriodSchema],
   
-  // Workload (hours per week)
   hoursPerWeek: {
     type: Number,
     default: 0,
     min: 0,
   },
 
-  // Validity Period
   startDate: {
     type: Date,
     default: Date.now,
   },
   endDate: Date,
 
-  // Room/Location
   defaultRoom: String,
 
-  // Status
   isActive: {
     type: Boolean,
     default: true,
   },
 
-  // Notes
   notes: String,
 }, { _id: true });
 
-// Main Teacher Assignment Schema
+// Main Teacher Assignment Schema - SINGLE-TENANT
 const TeacherAssignmentSchema = new mongoose.Schema(
   {
-    schoolId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "School",
-      required: true,
-      index: true,
-    },
-
-    // Teacher Reference
     teacher: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Teacher",
@@ -106,7 +91,6 @@ const TeacherAssignmentSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Academic Year
     academicYear: {
       type: String,
       required: true,
@@ -117,17 +101,14 @@ const TeacherAssignmentSchema = new mongoose.Schema(
       index: true,
     },
 
-    // All Assignments for this teacher
     assignments: [AssignmentSchema],
 
-    // Total Workload Summary
     totalHoursPerWeek: {
       type: Number,
       default: 0,
       min: 0,
     },
 
-    // Status
     status: {
       type: String,
       enum: ["active", "inactive", "completed"],
@@ -135,7 +116,6 @@ const TeacherAssignmentSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Metadata
     isDeleted: {
       type: Boolean,
       default: false,
@@ -155,31 +135,20 @@ const TeacherAssignmentSchema = new mongoose.Schema(
       ref: "User",
     },
   },
-  { 
-    timestamps: true 
-  }
+  { timestamps: true }
 );
 
 // ============================================
-// INDEXES FOR PERFORMANCE
+// INDEXES
 // ============================================
-
-// ✅ FIXED: Removed overly strict unique index
-// Now allows same teacher to teach same subject to multiple classes
-TeacherAssignmentSchema.index(
-  { schoolId: 1, teacher: 1, academicYear: 1 },
-  { unique: true }
-);
-
-TeacherAssignmentSchema.index({ schoolId: 1, academicYear: 1, status: 1 });
+TeacherAssignmentSchema.index({ teacher: 1, academicYear: 1 }, { unique: true });
+TeacherAssignmentSchema.index({ academicYear: 1, status: 1 });
 TeacherAssignmentSchema.index({ "assignments.subject": 1 });
 TeacherAssignmentSchema.index({ "assignments.class": 1 });
 
 // ============================================
 // VIRTUAL FIELDS
 // ============================================
-
-// Get active assignments count
 TeacherAssignmentSchema.virtual("activeAssignmentsCount").get(function() {
   if (!this.assignments) return 0;
   return this.assignments.filter(a => a.isActive).length;
@@ -191,8 +160,6 @@ TeacherAssignmentSchema.set("toObject", { virtuals: true });
 // ============================================
 // MIDDLEWARE
 // ============================================
-
-// Before save: Calculate total hours per week
 TeacherAssignmentSchema.pre("save", function(next) {
   if (this.assignments && this.assignments.length > 0) {
     this.totalHoursPerWeek = this.assignments
@@ -203,20 +170,15 @@ TeacherAssignmentSchema.pre("save", function(next) {
 });
 
 // ============================================
-// STATIC METHODS
+// STATIC METHODS - SINGLE-TENANT
 // ============================================
 
 // Get assignments by teacher
-TeacherAssignmentSchema.statics.getByTeacher = async function(
-  schoolId,
-  teacherId,
-  academicYear
-) {
+TeacherAssignmentSchema.statics.getByTeacher = async function(teacherId, academicYear) {
   const currentYear = academicYear || 
     `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
   return this.findOne({
-    schoolId,
     teacher: teacherId,
     academicYear: currentYear,
     isDeleted: false,
@@ -228,16 +190,11 @@ TeacherAssignmentSchema.statics.getByTeacher = async function(
 };
 
 // Get assignments by class
-TeacherAssignmentSchema.statics.getByClass = async function(
-  schoolId,
-  classId,
-  academicYear
-) {
+TeacherAssignmentSchema.statics.getByClass = async function(classId, academicYear) {
   const currentYear = academicYear || 
     `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
   return this.find({
-    schoolId,
     academicYear: currentYear,
     "assignments.class": classId,
     "assignments.isActive": true,
@@ -250,16 +207,11 @@ TeacherAssignmentSchema.statics.getByClass = async function(
 };
 
 // Get assignments by subject
-TeacherAssignmentSchema.statics.getBySubject = async function(
-  schoolId,
-  subjectId,
-  academicYear
-) {
+TeacherAssignmentSchema.statics.getBySubject = async function(subjectId, academicYear) {
   const currentYear = academicYear || 
     `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
   return this.find({
-    schoolId,
     academicYear: currentYear,
     "assignments.subject": subjectId,
     "assignments.isActive": true,
@@ -273,7 +225,6 @@ TeacherAssignmentSchema.statics.getBySubject = async function(
 
 // Check for schedule conflicts
 TeacherAssignmentSchema.statics.checkConflict = async function(
-  schoolId,
   teacherId,
   day,
   periodNumber,
@@ -284,21 +235,16 @@ TeacherAssignmentSchema.statics.checkConflict = async function(
     `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
   const assignment = await this.findOne({
-    schoolId,
     teacher: teacherId,
     academicYear: currentYear,
     isDeleted: false,
     "assignments.periods": {
-      $elemMatch: {
-        day: day,
-        periodNumber: periodNumber,
-      },
+      $elemMatch: { day: day, periodNumber: periodNumber },
     },
   });
 
   if (!assignment) return null;
 
-  // Filter to find the conflicting period
   for (const assign of assignment.assignments) {
     if (excludeAssignmentId && assign._id.toString() === excludeAssignmentId) {
       continue;
@@ -322,17 +268,13 @@ TeacherAssignmentSchema.statics.checkConflict = async function(
 };
 
 // Get teacher workload summary
-TeacherAssignmentSchema.statics.getWorkloadSummary = async function(
-  schoolId,
-  academicYear
-) {
+TeacherAssignmentSchema.statics.getWorkloadSummary = async function(academicYear) {
   const currentYear = academicYear || 
     `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
   return this.aggregate([
     {
       $match: {
-        schoolId: new mongoose.Types.ObjectId(schoolId),
         academicYear: currentYear,
         isDeleted: false,
         status: "active",
@@ -368,19 +310,6 @@ TeacherAssignmentSchema.statics.getWorkloadSummary = async function(
     },
     { $sort: { totalHours: -1 } },
   ]);
-};
-
-// Get unassigned classes (classes without teacher for a subject)
-TeacherAssignmentSchema.statics.getUnassignedClasses = async function(
-  schoolId,
-  academicYear
-) {
-  const currentYear = academicYear || 
-    `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
-
-  // This would need to be implemented based on your requirements
-  // Would involve comparing all classes against assigned ones
-  return [];
 };
 
 const TeacherAssignment = mongoose.model("TeacherAssignment", TeacherAssignmentSchema);

@@ -1,8 +1,8 @@
+// ============================================
+// TIMETABLE CONTROLLER - SINGLE-TENANT EDITION
+// ============================================
 
 import Timetable from "../models/timetable.model.js";
-
-// ✅ REMOVED DAY_MAP - Frontend already sends correct format
-// The model expects: "Monday", "Tuesday", etc.
 
 // Helper: Validate time range
 const validateTimeRange = (startTime, endTime) => {
@@ -38,9 +38,8 @@ const checkTimeConflict = (entries, newEntry) => {
 };
 
 // Helper: Check teacher availability
-const checkTeacherConflict = async (schoolId, teacherId, day, period, startTime, endTime, excludeId = null) => {
+const checkTeacherConflict = async (teacherId, day, period, startTime, endTime, excludeId = null) => {
   const query = {
-    schoolId,
     teacherId,
     day,
     _id: { $ne: excludeId }
@@ -71,8 +70,6 @@ const checkTeacherConflict = async (schoolId, teacherId, day, period, startTime,
 // CREATE ENTRY
 export const createEntry = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    
     // Validate required fields
     if (!req.body.classId || !req.body.subjectId || !req.body.teacherId) {
       return res.status(400).json({ 
@@ -91,7 +88,6 @@ export const createEntry = async (req, res) => {
     
     // Check time conflicts
     const existingEntries = await Timetable.find({
-      schoolId,
       classId: req.body.classId,
       day: req.body.day
     });
@@ -106,7 +102,6 @@ export const createEntry = async (req, res) => {
     
     // Check teacher conflicts
     const teacherConflict = await checkTeacherConflict(
-      schoolId,
       req.body.teacherId,
       req.body.day,
       req.body.period,
@@ -121,11 +116,10 @@ export const createEntry = async (req, res) => {
       });
     }
     
-    // ✅ Create payload WITHOUT day mapping
+    // Create payload
     const payload = {
       ...req.body,
-      schoolId,
-      createdBy: req.user._id,
+      createdBy: req.user?.id,
     };
     
     const entry = await Timetable.create(payload);
@@ -167,13 +161,12 @@ export const createEntry = async (req, res) => {
   }
 };
 
-// ✅ UPDATE ENTRY (MISSING FUNCTION - NOW ADDED)
+// UPDATE ENTRY
 export const updateEntry = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.user.schoolId;
     
-    const existing = await Timetable.findOne({ _id: id, schoolId });
+    const existing = await Timetable.findById(id);
     if (!existing) {
       return res.status(404).json({ 
         success: false, 
@@ -197,7 +190,6 @@ export const updateEntry = async (req, res) => {
     const day = req.body.day || existing.day;
     
     const existingEntries = await Timetable.find({
-      schoolId,
       classId,
       day,
       _id: { $ne: id }
@@ -220,7 +212,6 @@ export const updateEntry = async (req, res) => {
     // Check teacher conflicts
     const teacherId = req.body.teacherId || existing.teacherId;
     const teacherConflict = await checkTeacherConflict(
-      schoolId,
       teacherId,
       day,
       req.body.period || existing.period,
@@ -280,7 +271,6 @@ export const updateEntry = async (req, res) => {
 // LIST BY CLASS
 export const listByClass = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { classId } = req.params;
     
     if (!classId) {
@@ -290,7 +280,7 @@ export const listByClass = async (req, res) => {
       });
     }
     
-    const entries = await Timetable.find({ schoolId, classId })
+    const entries = await Timetable.find({ classId })
       .populate("subjectId", "name code")
       .populate("teacherId", "fullName name email")
       .populate("classId", "grade section name")
@@ -315,9 +305,8 @@ export const listByClass = async (req, res) => {
 export const deleteEntry = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.user.schoolId;
     
-    const entry = await Timetable.findOneAndDelete({ _id: id, schoolId });
+    const entry = await Timetable.findByIdAndDelete(id);
     
     if (!entry) {
       return res.status(404).json({ 

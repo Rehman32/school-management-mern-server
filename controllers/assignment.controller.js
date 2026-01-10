@@ -1,5 +1,6 @@
-// TEACHER ASSIGNMENT CONTROLLER
-
+// ============================================
+// TEACHER ASSIGNMENT CONTROLLER - SINGLE-TENANT
+// ============================================
 
 const TeacherAssignment = require("../models/teacherAssignment.model");
 const Teacher = require("../models/teacher.model");
@@ -28,8 +29,7 @@ const validateAssignment = (data) => {
 // ============================================
 exports.createOrUpdateAssignment = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const userId = req.user?.id;
     const { teacher, subject, class: classId, periods, hoursPerWeek, assignmentType, defaultRoom, notes } = req.body;
 
     // Validate input
@@ -43,52 +43,25 @@ exports.createOrUpdateAssignment = async (req, res) => {
 
     // Validate teacher, subject, and class in parallel
     const [teacherExists, subjectExists, classExists] = await Promise.all([
-      Teacher.findOne({ 
-        _id: teacher, 
-        schoolId, 
-        status: "Active", 
-        isDeleted: false 
-      }),
-      Subject.findOne({ 
-        _id: subject, 
-        schoolId, 
-        status: "active", 
-        isDeleted: false 
-      }),
-      Class.findOne({ 
-        _id: classId, 
-        schoolId, 
-        status: "active", 
-        isDeleted: false 
-      })
+      Teacher.findOne({ _id: teacher, status: "Active", isDeleted: false }),
+      Subject.findOne({ _id: subject, status: "active", isDeleted: false }),
+      Class.findOne({ _id: classId, status: "active", isDeleted: false })
     ]);
 
     if (!teacherExists) {
-      return res.status(404).json({
-        success: false,
-        message: "Teacher not found or inactive"
-      });
+      return res.status(404).json({ success: false, message: "Teacher not found or inactive" });
     }
-
     if (!subjectExists) {
-      return res.status(404).json({
-        success: false,
-        message: "Subject not found or inactive"
-      });
+      return res.status(404).json({ success: false, message: "Subject not found or inactive" });
     }
-
     if (!classExists) {
-      return res.status(404).json({
-        success: false,
-        message: "Class not found or inactive"
-      });
+      return res.status(404).json({ success: false, message: "Class not found or inactive" });
     }
 
     // Check for schedule conflicts if periods are provided
     if (periods && periods.length > 0) {
       for (const period of periods) {
         const conflict = await TeacherAssignment.checkConflict(
-          schoolId,
           teacher,
           period.day,
           period.periodNumber,
@@ -110,11 +83,7 @@ exports.createOrUpdateAssignment = async (req, res) => {
       `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
     // Find existing assignment document for this teacher
-    let assignment = await TeacherAssignment.findOne({
-      schoolId,
-      teacher,
-      academicYear,
-    });
+    let assignment = await TeacherAssignment.findOne({ teacher, academicYear });
 
     const newAssignment = {
       subject,
@@ -128,7 +97,6 @@ exports.createOrUpdateAssignment = async (req, res) => {
     };
 
     if (assignment) {
-      // Check if this exact assignment already exists
       const existingIndex = assignment.assignments.findIndex(
         a => a.subject.toString() === subject && 
              a.class.toString() === classId &&
@@ -136,22 +104,18 @@ exports.createOrUpdateAssignment = async (req, res) => {
       );
 
       if (existingIndex !== -1) {
-        // Update existing assignment
         assignment.assignments[existingIndex] = {
           ...assignment.assignments[existingIndex].toObject(),
           ...newAssignment,
         };
       } else {
-        // Add new assignment
         assignment.assignments.push(newAssignment);
       }
 
       assignment.updatedBy = userId;
       await assignment.save();
     } else {
-      // Create new assignment document
       assignment = new TeacherAssignment({
-        schoolId,
         teacher,
         academicYear,
         assignments: [newAssignment],
@@ -161,7 +125,6 @@ exports.createOrUpdateAssignment = async (req, res) => {
       await assignment.save();
     }
 
-    // Populate and return
     const populated = await TeacherAssignment.findById(assignment._id)
       .populate("teacher", "fullName email employeeId")
       .populate("assignments.subject", "name code")
@@ -174,10 +137,7 @@ exports.createOrUpdateAssignment = async (req, res) => {
     });
   } catch (err) {
     console.error("createOrUpdateAssignment error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to create assignment"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to create assignment" });
   }
 };
 
@@ -186,37 +146,22 @@ exports.createOrUpdateAssignment = async (req, res) => {
 // ============================================
 exports.getAssignmentsByTeacher = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { teacherId } = req.params;
     const { academicYear } = req.query;
 
-    const assignment = await TeacherAssignment.getByTeacher(
-      schoolId,
-      teacherId,
-      academicYear
-    );
+    const assignment = await TeacherAssignment.getByTeacher(teacherId, academicYear);
 
     if (!assignment) {
       return res.json({
         success: true,
-        data: {
-          teacher: teacherId,
-          assignments: [],
-          totalHoursPerWeek: 0,
-        }
+        data: { teacher: teacherId, assignments: [], totalHoursPerWeek: 0 }
       });
     }
 
-    res.json({
-      success: true,
-      data: assignment
-    });
+    res.json({ success: true, data: assignment });
   } catch (err) {
     console.error("getAssignmentsByTeacher error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch assignments"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to fetch assignments" });
   }
 };
 
@@ -225,26 +170,15 @@ exports.getAssignmentsByTeacher = async (req, res) => {
 // ============================================
 exports.getAssignmentsByClass = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { classId } = req.params;
     const { academicYear } = req.query;
 
-    const assignments = await TeacherAssignment.getByClass(
-      schoolId,
-      classId,
-      academicYear
-    );
+    const assignments = await TeacherAssignment.getByClass(classId, academicYear);
 
-    res.json({
-      success: true,
-      data: assignments
-    });
+    res.json({ success: true, data: assignments });
   } catch (err) {
     console.error("getAssignmentsByClass error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch assignments"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to fetch assignments" });
   }
 };
 
@@ -253,26 +187,15 @@ exports.getAssignmentsByClass = async (req, res) => {
 // ============================================
 exports.getAssignmentsBySubject = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { subjectId } = req.params;
     const { academicYear } = req.query;
 
-    const assignments = await TeacherAssignment.getBySubject(
-      schoolId,
-      subjectId,
-      academicYear
-    );
+    const assignments = await TeacherAssignment.getBySubject(subjectId, academicYear);
 
-    res.json({
-      success: true,
-      data: assignments
-    });
+    res.json({ success: true, data: assignments });
   } catch (err) {
     console.error("getAssignmentsBySubject error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch assignments"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to fetch assignments" });
   }
 };
 
@@ -281,23 +204,12 @@ exports.getAssignmentsBySubject = async (req, res) => {
 // ============================================
 exports.getAllAssignments = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const {
-      page = 1,
-      limit = 50,
-      academicYear,
-      status = "active",
-    } = req.query;
+    const { page = 1, limit = 50, academicYear, status = "active" } = req.query;
 
     const currentYear = academicYear || 
       `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
-    const query = {
-      schoolId,
-      academicYear: currentYear,
-      isDeleted: false,
-    };
-
+    const query = { academicYear: currentYear, isDeleted: false };
     if (status && status !== "all") query.status = status;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -326,10 +238,7 @@ exports.getAllAssignments = async (req, res) => {
     });
   } catch (err) {
     console.error("getAllAssignments error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to fetch assignments"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to fetch assignments" });
   }
 };
 
@@ -338,8 +247,7 @@ exports.getAllAssignments = async (req, res) => {
 // ============================================
 exports.removeAssignment = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const userId = req.user?.id;
     const { teacherId, assignmentId } = req.params;
     const { academicYear } = req.query;
 
@@ -347,19 +255,14 @@ exports.removeAssignment = async (req, res) => {
       `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
     const assignment = await TeacherAssignment.findOne({
-      schoolId,
       teacher: teacherId,
       academicYear: currentYear,
     });
 
     if (!assignment) {
-      return res.status(404).json({
-        success: false,
-        message: "Assignment not found"
-      });
+      return res.status(404).json({ success: false, message: "Assignment not found" });
     }
 
-    // Remove the specific assignment
     assignment.assignments = assignment.assignments.filter(
       a => a._id.toString() !== assignmentId
     );
@@ -367,17 +270,10 @@ exports.removeAssignment = async (req, res) => {
     assignment.updatedBy = userId;
     await assignment.save();
 
-    res.json({
-      success: true,
-      message: "Assignment removed successfully",
-      data: assignment
-    });
+    res.json({ success: true, message: "Assignment removed successfully", data: assignment });
   } catch (err) {
     console.error("removeAssignment error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to remove assignment"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to remove assignment" });
   }
 };
 
@@ -386,7 +282,6 @@ exports.removeAssignment = async (req, res) => {
 // ============================================
 exports.checkConflict = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { teacherId, day, periodNumber, academicYear, excludeAssignmentId } = req.query;
 
     if (!teacherId || !day || !periodNumber) {
@@ -397,7 +292,6 @@ exports.checkConflict = async (req, res) => {
     }
 
     const conflict = await TeacherAssignment.checkConflict(
-      schoolId,
       teacherId,
       day,
       parseInt(periodNumber),
@@ -405,17 +299,10 @@ exports.checkConflict = async (req, res) => {
       excludeAssignmentId
     );
 
-    res.json({
-      success: true,
-      hasConflict: !!conflict,
-      conflict: conflict || null
-    });
+    res.json({ success: true, hasConflict: !!conflict, conflict: conflict || null });
   } catch (err) {
     console.error("checkConflict error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to check conflict"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to check conflict" });
   }
 };
 
@@ -424,24 +311,13 @@ exports.checkConflict = async (req, res) => {
 // ============================================
 exports.getWorkloadSummary = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { academicYear } = req.query;
+    const summary = await TeacherAssignment.getWorkloadSummary(academicYear);
 
-    const summary = await TeacherAssignment.getWorkloadSummary(
-      schoolId,
-      academicYear
-    );
-
-    res.json({
-      success: true,
-      data: summary
-    });
+    res.json({ success: true, data: summary });
   } catch (err) {
     console.error("getWorkloadSummary error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to get workload summary"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to get workload summary" });
   }
 };
 
@@ -450,23 +326,15 @@ exports.getWorkloadSummary = async (req, res) => {
 // ============================================
 exports.getClassTimetable = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { classId } = req.params;
     const { academicYear } = req.query;
 
-    const assignments = await TeacherAssignment.getByClass(
-      schoolId,
-      classId,
-      academicYear
-    );
+    const assignments = await TeacherAssignment.getByClass(classId, academicYear);
 
-    // Organize by day and period
     const timetable = {};
     const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
-    days.forEach(day => {
-      timetable[day] = {};
-    });
+    days.forEach(day => { timetable[day] = {}; });
 
     assignments.forEach(assignment => {
       assignment.assignments.forEach(assign => {
@@ -487,16 +355,10 @@ exports.getClassTimetable = async (req, res) => {
       });
     });
 
-    res.json({
-      success: true,
-      data: timetable
-    });
+    res.json({ success: true, data: timetable });
   } catch (err) {
     console.error("getClassTimetable error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to get class timetable"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to get class timetable" });
   }
 };
 
@@ -505,30 +367,19 @@ exports.getClassTimetable = async (req, res) => {
 // ============================================
 exports.getTeacherTimetable = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const { teacherId } = req.params;
     const { academicYear } = req.query;
 
-    const assignment = await TeacherAssignment.getByTeacher(
-      schoolId,
-      teacherId,
-      academicYear
-    );
+    const assignment = await TeacherAssignment.getByTeacher(teacherId, academicYear);
 
     if (!assignment) {
-      return res.json({
-        success: true,
-        data: {}
-      });
+      return res.json({ success: true, data: {} });
     }
 
-    // Organize by day and period
     const timetable = {};
     const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
-    days.forEach(day => {
-      timetable[day] = {};
-    });
+    days.forEach(day => { timetable[day] = {}; });
 
     assignment.assignments.forEach(assign => {
       if (assign.isActive && assign.periods) {
@@ -547,16 +398,10 @@ exports.getTeacherTimetable = async (req, res) => {
       }
     });
 
-    res.json({
-      success: true,
-      data: timetable
-    });
+    res.json({ success: true, data: timetable });
   } catch (err) {
     console.error("getTeacherTimetable error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to get teacher timetable"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to get teacher timetable" });
   }
 };
 
@@ -565,40 +410,27 @@ exports.getTeacherTimetable = async (req, res) => {
 // ============================================
 exports.bulkAssign = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-    const userId = req.user._id;
+    const userId = req.user?.id;
     const { assignments } = req.body;
 
     if (!assignments || !Array.isArray(assignments) || assignments.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Assignments array is required"
-      });
+      return res.status(400).json({ success: false, message: "Assignments array is required" });
     }
 
-    const results = {
-      success: [],
-      failed: [],
-    };
+    const results = { success: [], failed: [] };
 
     for (const assignData of assignments) {
       try {
-        // Validate
         const validation = validateAssignment(assignData);
         if (!validation.valid) {
-          results.failed.push({
-            data: assignData,
-            error: validation.message,
-          });
+          results.failed.push({ data: assignData, error: validation.message });
           continue;
         }
 
-        // Use the create/update logic
         const academicYear = assignData.academicYear || 
           `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
 
         let assignment = await TeacherAssignment.findOne({
-          schoolId,
           teacher: assignData.teacher,
           academicYear,
         });
@@ -620,7 +452,6 @@ exports.bulkAssign = async (req, res) => {
           await assignment.save();
         } else {
           assignment = new TeacherAssignment({
-            schoolId,
             teacher: assignData.teacher,
             academicYear,
             assignments: [newAssignment],
@@ -632,10 +463,7 @@ exports.bulkAssign = async (req, res) => {
 
         results.success.push(assignment);
       } catch (err) {
-        results.failed.push({
-          data: assignData,
-          error: err.message,
-        });
+        results.failed.push({ data: assignData, error: err.message });
       }
     }
 
@@ -646,9 +474,6 @@ exports.bulkAssign = async (req, res) => {
     });
   } catch (err) {
     console.error("bulkAssign error:", err);
-    res.status(500).json({
-      success: false,
-      message: err.message || "Failed to bulk assign"
-    });
+    res.status(500).json({ success: false, message: err.message || "Failed to bulk assign" });
   }
 };
