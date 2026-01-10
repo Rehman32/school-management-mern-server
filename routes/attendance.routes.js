@@ -2,11 +2,10 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../controllers/attendance.controller");
-const { protect, authorize , injectTenant } = require("../middlewares/auth.middleware");
+const { protect, authorize } = require("../middlewares/auth.middleware");
 
 // Protect all attendance routes
 router.use(protect);
-router.use(injectTenant);
 
 // ============================================
 // ATTENDANCE MARKING

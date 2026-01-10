@@ -1,11 +1,9 @@
 // ============================================
-// AUTH SERVICE
+// AUTH SERVICE - SINGLE-TENANT EDITION
 // Core authentication business logic
 // ============================================
 
 const User = require('../models/user.model');
-const Tenant = require('../models/tenant.model');
-const Invitation = require('../models/invitation.model');
 const TokenService = require('./token.service');
 const EncryptionService = require('./encryption.service');
 const AuditMiddleware = require('../middlewares/audit.middleware');
@@ -15,14 +13,14 @@ const {
   NotFoundError,
   ConflictError,
 } = require('../utils/errors');
-const { ERROR_CODES } = require('../utils/constants');
+const { ERROR_CODES, ROLES } = require('../utils/constants');
 
 class AuthService {
   /**
-   * Register New User
+   * Register New User (Admin creation)
    */
   static async register(userData, req) {
-    const { name, email, password, role, tenantId, invitationCode } = userData;
+    const { name, email, password, role = ROLES.ADMIN } = userData;
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -30,28 +28,9 @@ class AuthService {
       throw new ConflictError('User with this email already exists');
     }
 
-    // Validate invitation if provided
-    let tenant = null;
-    let invitation = null;
-
-    if (invitationCode) {
-      invitation = await Invitation.findValidInvitation(invitationCode);
-      if (!invitation) {
-        throw new ValidationError('Invalid or expired invitation code');
-      }
-      tenant = invitation.tenantId;
-    } else if (tenantId) {
-      tenant = await Tenant.findById(tenantId);
-      if (!tenant) {
-        throw new NotFoundError('Tenant');
-      }
-    } else {
-      throw new ValidationError('Either tenantId or invitationCode is required');
-    }
-
-    // Check tenant limits
-    if (tenant.hasReachedLimit('students') && role === 'student') {
-      throw new ValidationError('School has reached maximum student limit');
+    // Only allow admin and teacher roles
+    if (role !== ROLES.ADMIN && role !== ROLES.TEACHER) {
+      throw new ValidationError('Invalid role. Only admin and teacher roles are allowed.');
     }
 
     // Validate password strength
@@ -67,23 +46,10 @@ class AuthService {
       name,
       email: email.toLowerCase(),
       password, // Will be hashed by pre-save hook
-      role: invitation ? invitation.role : role,
-      tenantId: tenant._id,
-      invitedBy: invitation?.invitedBy,
-      invitationCode: invitationCode,
-      isVerified: false, // Requires email verification
+      role,
+      isVerified: false,
       isActive: true,
     });
-
-    // Accept invitation if provided
-    if (invitation) {
-      await invitation.accept();
-      user.invitationAcceptedAt = new Date();
-      await user.save();
-    }
-
-    // Update tenant usage
-    await tenant.updateUsage(role === 'student' ? 'students' : 'teachers', true);
 
     // Generate email verification token
     const verificationToken = user.generateEmailVerificationToken();
@@ -99,7 +65,6 @@ class AuthService {
     // Audit log
     AuditMiddleware.logAudit({
       userId: user._id,
-      tenantId: tenant._id,
       action: 'register',
       resource: 'User',
       method: 'POST',
@@ -116,139 +81,119 @@ class AuthService {
         name: user.name,
         email: user.email,
         role: user.role,
-        tenantId: user.tenantId,
         isVerified: user.isVerified,
       },
       tokens,
-      verificationToken, // Send via email
+      verificationToken,
     };
   }
 
- /**
- * Login User (BACKWARD COMPATIBLE)
- */
-static async login(credentials, req) {
-  const { email, password } = credentials;
+  /**
+   * Login User
+   */
+  static async login(credentials, req) {
+    const { email, password } = credentials;
 
-  // Find user with password field
-  const user = await User.findOne({
-    email: email.toLowerCase(),
-    isDeleted: false,
-  })
-    .select('+password')
-    .populate('tenantId');
+    // Find user with password field
+    const user = await User.findOne({
+      email: email.toLowerCase(),
+      isDeleted: false,
+    }).select('+password');
 
-  if (!user) {
-    // Audit failed login
-    AuditMiddleware.auditFailedLogin(req, {
-      error: 'User not found',
-      reason: 'invalid_email',
-    });
-    throw new AuthenticationError('Invalid email or password');
-  }
-
-  // BACKWARD COMPATIBILITY: Handle users without tenantId (old users)
-  if (!user.tenantId) {
-    console.warn('⚠️  User has no tenantId (old data). Please migrate user:', user.email);
-    // For now, allow login but log warning
-    // In production, you should migrate all users
-  }
-
-  // Check if account is locked
-  if (user.isAccountLocked && user.isAccountLocked()) {
-    AuditMiddleware.auditFailedLogin(req, {
-      tenantId: user.tenantId,
-      error: 'Account locked',
-      reason: 'account_locked',
-    });
-    throw new AuthenticationError(
-      'Account is temporarily locked due to multiple failed login attempts. Please try again later.',
-      ERROR_CODES.ACCOUNT_LOCKED
-    );
-  }
-
-  // Verify password
-  const isPasswordMatch = await user.comparePassword(password);
-
-  if (!isPasswordMatch) {
-    // Increment failed login attempts (only if method exists)
-    if (user.incrementFailedLogins) {
-      await user.incrementFailedLogins();
+    if (!user) {
+      AuditMiddleware.auditFailedLogin(req, {
+        error: 'User not found',
+        reason: 'invalid_email',
+      });
+      throw new AuthenticationError('Invalid email or password');
     }
 
-    AuditMiddleware.auditFailedLogin(req, {
-      tenantId: user.tenantId,
-      error: 'Invalid password',
-      reason: 'invalid_password',
-    });
-
-    throw new AuthenticationError('Invalid email or password');
-  }
-
-  // Check if user is active
-  if (user.isActive === false) {
-    throw new AuthenticationError(
-      'Account is deactivated. Please contact support.',
-      ERROR_CODES.ACCOUNT_LOCKED
-    );
-  }
-
-  // Check tenant status (only if tenant exists)
-  if (user.tenantId) {
-    const tenant = user.tenantId;
-    if (tenant && tenant.subscriptionStatus !== 'active') {
+    // Check if account is locked
+    if (user.isAccountLocked && user.isAccountLocked()) {
+      AuditMiddleware.auditFailedLogin(req, {
+        error: 'Account locked',
+        reason: 'account_locked',
+      });
       throw new AuthenticationError(
-        'School subscription is inactive. Please contact administration.',
-        ERROR_CODES.TENANT_INACTIVE
+        'Account is temporarily locked due to multiple failed login attempts. Please try again later.',
+        ERROR_CODES.ACCOUNT_LOCKED
       );
     }
+
+    // Verify password
+    const isPasswordMatch = await user.comparePassword(password);
+
+    if (!isPasswordMatch) {
+      if (user.incrementFailedLogins) {
+        await user.incrementFailedLogins();
+      }
+
+      AuditMiddleware.auditFailedLogin(req, {
+        error: 'Invalid password',
+        reason: 'invalid_password',
+      });
+
+      throw new AuthenticationError('Invalid email or password');
+    }
+
+    // Check if user is active
+    if (user.isActive === false) {
+      throw new AuthenticationError(
+        'Account is deactivated. Please contact support.',
+        ERROR_CODES.ACCOUNT_LOCKED
+      );
+    }
+
+    // Only allow admin and teacher roles
+    if (user.role !== ROLES.ADMIN && user.role !== ROLES.TEACHER) {
+      throw new AuthenticationError(
+        'Unauthorized role. Only admin and teacher can login.',
+        ERROR_CODES.INSUFFICIENT_PERMISSIONS
+      );
+    }
+
+    // Reset failed login attempts
+    if (user.resetFailedLogins) {
+      await user.resetFailedLogins();
+    }
+
+    // Update last login
+    if (user.updateLastLogin) {
+      await user.updateLastLogin();
+    }
+
+    // Generate tokens
+    const tokens = await TokenService.generateTokenPair(
+      user,
+      req.ip,
+      req.get('user-agent')
+    );
+
+    // Audit log
+    AuditMiddleware.logAudit({
+      userId: user._id,
+      action: 'login',
+      resource: 'User',
+      method: 'POST',
+      endpoint: req.originalUrl,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      status: 'success',
+      severity: 'medium',
+    });
+
+    return {
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified || false,
+        lastLogin: user.lastLogin,
+      },
+      tokens,
+    };
   }
-
-  // Reset failed login attempts (only if method exists)
-  if (user.resetFailedLogins) {
-    await user.resetFailedLogins();
-  }
-
-  // Update last login (only if method exists)
-  if (user.updateLastLogin) {
-    await user.updateLastLogin();
-  }
-
-  // Generate tokens
-  const tokens = await TokenService.generateTokenPair(
-    user,
-    req.ip,
-    req.get('user-agent')
-  );
-
-  // Audit log (only if tenantId exists)
-  AuditMiddleware.logAudit({
-    userId: user._id,
-    tenantId: user.tenantId?._id || user.tenantId,
-    action: 'login',
-    resource: 'User',
-    method: 'POST',
-    endpoint: req.originalUrl,
-    ipAddress: req.ip,
-    userAgent: req.get('user-agent'),
-    status: 'success',
-    severity: 'medium',
-  });
-
-  return {
-    user: {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      tenantId: user.tenantId?._id || user.tenantId,
-      isVerified: user.isVerified || false,
-      lastLogin: user.lastLogin,
-    },
-    tokens,
-  };
-}
-
 
   /**
    * Refresh Access Token
@@ -259,28 +204,23 @@ static async login(credentials, req) {
       req.ip,
       req.get('user-agent')
     );
-
     return tokens;
   }
 
   /**
- * Logout User (FIXED - Handle missing token)
- */
-static async logout(refreshToken, userId) {
-  try {
-    // Revoke refresh token if provided
-    if (refreshToken) {
-      await TokenService.revokeToken(refreshToken, 'logout');
+   * Logout User
+   */
+  static async logout(refreshToken, userId) {
+    try {
+      if (refreshToken) {
+        await TokenService.revokeToken(refreshToken, 'logout');
+      }
+      return { message: 'Logged out successfully' };
+    } catch (error) {
+      console.error('Logout error (non-critical):', error);
+      return { message: 'Logged out successfully' };
     }
-    
-    return { message: 'Logged out successfully' };
-  } catch (error) {
-    // Don't throw error on logout - always succeed
-    console.error('Logout error (non-critical):', error);
-    return { message: 'Logged out successfully' };
   }
-}
-
 
   /**
    * Logout from All Devices
@@ -334,7 +274,6 @@ static async logout(refreshToken, userId) {
       throw new ValidationError('Email is already verified');
     }
 
-    // Generate new token
     const verificationToken = user.generateEmailVerificationToken();
     await user.save();
 
@@ -351,19 +290,17 @@ static async logout(refreshToken, userId) {
     const user = await User.findOne({ email: email.toLowerCase() });
 
     if (!user) {
-      // Don't reveal if user exists
       return {
         message: 'If an account exists, a password reset email has been sent',
       };
     }
 
-    // Generate reset token
     const resetToken = user.generatePasswordResetToken();
     await user.save();
 
     return {
       message: 'Password reset email sent',
-      resetToken, // Send via email
+      resetToken,
     };
   }
 
@@ -382,7 +319,6 @@ static async logout(refreshToken, userId) {
       throw new ValidationError('Invalid or expired reset token');
     }
 
-    // Validate new password
     const passwordValidation = EncryptionService.validatePasswordStrength(newPassword);
     if (!passwordValidation.isValid) {
       throw new ValidationError('Password does not meet requirements', {
@@ -390,13 +326,11 @@ static async logout(refreshToken, userId) {
       });
     }
 
-    // Update password
-    user.password = newPassword; // Will be hashed by pre-save hook
+    user.password = newPassword;
     user.passwordResetToken = undefined;
     user.passwordResetExpiry = undefined;
     await user.save();
 
-    // Revoke all refresh tokens (force re-login)
     await TokenService.revokeAllUserTokens(user._id, 'password_reset');
 
     return {
@@ -414,13 +348,11 @@ static async logout(refreshToken, userId) {
       throw new NotFoundError('User');
     }
 
-    // Verify current password
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
       throw new AuthenticationError('Current password is incorrect');
     }
 
-    // Validate new password
     const passwordValidation = EncryptionService.validatePasswordStrength(newPassword);
     if (!passwordValidation.isValid) {
       throw new ValidationError('Password does not meet requirements', {
@@ -428,11 +360,9 @@ static async logout(refreshToken, userId) {
       });
     }
 
-    // Update password
     user.password = newPassword;
     await user.save();
 
-    // Revoke all refresh tokens except current
     await TokenService.revokeAllUserTokens(user._id, 'password_change');
 
     return {
@@ -441,39 +371,29 @@ static async logout(refreshToken, userId) {
   }
 
   /**
- * Get Current User Profile (FIXED - Return clean data)
- */
-static async getCurrentUser(userId) {
-  const user = await User.findById(userId)
-    .populate('tenantId', 'name logo subscriptionPlan')
-    .select('-password');
+   * Get Current User Profile
+   */
+  static async getCurrentUser(userId) {
+    const user = await User.findById(userId).select('-password');
 
-  if (!user) {
-    throw new NotFoundError('User');
+    if (!user) {
+      throw new NotFoundError('User');
+    }
+
+    return {
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified,
+        isActive: user.isActive,
+        profile: user.profile,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+      },
+    };
   }
-
-  // Return clean user object
-  return {
-    user: {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      isVerified: user.isVerified,
-      isActive: user.isActive,
-      profile: user.profile,
-      tenant: user.tenantId ? {
-        id: user.tenantId._id,
-        name: user.tenantId.name,
-        logo: user.tenantId.logo,
-        subscriptionPlan: user.tenantId.subscriptionPlan,
-      } : null,
-      lastLogin: user.lastLogin,
-      createdAt: user.createdAt,
-    },
-  };
-}
-
 
   /**
    * Update User Profile
@@ -485,9 +405,7 @@ static async getCurrentUser(userId) {
       throw new NotFoundError('User');
     }
 
-    // Update allowed fields
     const allowedUpdates = ['name', 'phone', 'avatar', 'dateOfBirth', 'address'];
-    const profileUpdates = {};
 
     Object.keys(updates).forEach((key) => {
       if (allowedUpdates.includes(key)) {

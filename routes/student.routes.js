@@ -2,11 +2,10 @@
 const express = require('express');
 const router = express.Router();
 const studentController = require('../controllers/student.controller');
-const { protect, authorize ,injectTenant} = require('../middlewares/auth.middleware');
+const { protect, authorize } = require('../middlewares/auth.middleware');
 
 // Protect all routes
-router.use(protect);
-router.use(injectTenant); 
+router.use(protect); 
 
 // ============================================
 // STUDENT CRUD OPERATIONS

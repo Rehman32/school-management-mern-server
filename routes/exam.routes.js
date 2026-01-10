@@ -1,11 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { protect, authorize, injectTenant } = require("../middlewares/auth.middleware");
+const { protect, authorize } = require("../middlewares/auth.middleware");
 const examCtrl = require("../controllers/exam.controller");
 
-// Apply auth & tenant injection
+// Apply auth
 router.use(protect);
-router.use(injectTenant); // ADD THIS LINE
 
 // Exam CRUD
 router.post("/", authorize("admin", "teacher"), examCtrl.createExam);

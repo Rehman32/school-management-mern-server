@@ -1,11 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const classCtrl = require("../controllers/class.controller");
-const { protect, authorize, injectTenant } = require("../middlewares/auth.middleware");
+const { protect, authorize } = require("../middlewares/auth.middleware");
 
-// Apply auth & tenant injection to all routes
+// Apply auth to all routes
 router.use(protect);
-router.use(injectTenant); // ADD THIS LINE - Critical!
 
 // List & Statistics
 router.get("/", authorize("admin", "teacher"), classCtrl.listClasses);

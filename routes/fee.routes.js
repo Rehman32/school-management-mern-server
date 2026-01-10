@@ -5,18 +5,18 @@
 
 const express = require("express");
 const router = express.Router();
-const { protect, authorize,injectTenant } = require("../middlewares/auth.middleware");
+const { protect, authorize } = require("../middlewares/auth.middleware");
 const feeCtrl = require("../controllers/fee.controller");
 
 // Apply authentication to all routes
 router.use(protect);
-router.use(injectTenant);
+
 // ============================================
 // FEE CRUD OPERATIONS
 // ============================================
 
 // List fees (with pagination and filtering)
-router.get("/", authorize("admin", "teacher", "student"), feeCtrl.listFees);
+router.get("/", authorize("admin", "teacher"), feeCtrl.listFees);
 
 // Get statistics
 router.get("/stats", authorize("admin", "teacher"), feeCtrl.getStatistics);
