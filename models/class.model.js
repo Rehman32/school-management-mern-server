@@ -1,24 +1,10 @@
 // ============================================
-// CLASS MODEL - MULTI-TENANT COMPATIBLE
+// CLASS MODEL - SINGLE-TENANT EDITION
 // ============================================
 
 const mongoose = require("mongoose");
 
 const ClassSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP (REQUIRED) =====
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Tenant",
-    required: [true, "Tenant ID is required"],
-    index: true,
-  },
-  // Keep schoolId for backward compatibility
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "School",
-    required: false,
-  },
-
   // ===== CLASS INFORMATION =====
   name: {
     type: String,
@@ -102,17 +88,8 @@ const ClassSchema = new mongoose.Schema({
 });
 
 // ===== INDEXES =====
-ClassSchema.index({ tenantId: 1, grade: 1, section: 1 }, { unique: true });
-ClassSchema.index({ tenantId: 1, status: 1 });
-ClassSchema.index({ tenantId: 1, isDeleted: 1 });
-
-// ===== PRE-SAVE HOOK =====
-ClassSchema.pre("save", function(next) {
-  // Backward compatibility
-  if (this.schoolId && !this.tenantId) {
-    this.tenantId = this.schoolId;
-  }
-  next();
-});
+ClassSchema.index({ grade: 1, section: 1 }, { unique: true });
+ClassSchema.index({ status: 1 });
+ClassSchema.index({ isDeleted: 1 });
 
 module.exports = mongoose.model("Class", ClassSchema);

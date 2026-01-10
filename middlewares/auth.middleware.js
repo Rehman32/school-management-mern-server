@@ -1,14 +1,13 @@
 // ============================================
-// ENHANCED AUTH MIDDLEWARE
+// AUTH MIDDLEWARE - SINGLE-TENANT EDITION
 // JWT verification with refresh token support
 // ============================================
 
 const jwt = require('jsonwebtoken');
 const User = require('../models/user.model');
-const Tenant = require('../models/tenant.model');
 const TokenService = require('../services/token.service');
 const { AuthenticationError, AuthorizationError } = require('../utils/errors');
-const { ERROR_CODES } = require('../utils/constants');
+const { ERROR_CODES, ROLES } = require('../utils/constants');
 
 class AuthMiddleware {
   /**
@@ -55,7 +54,6 @@ class AuthMiddleware {
 
       // 3. Get user from database
       const user = await User.findById(decoded.user.id)
-        .populate('tenantId')
         .select('-password');
 
       if (!user) {
@@ -89,29 +87,16 @@ class AuthMiddleware {
         );
       }
 
-      // 7. Check tenant status
-      const tenant = user.tenantId;
-      if (tenant && tenant.subscriptionStatus !== 'active') {
-        throw new AuthenticationError(
-          'School subscription is inactive. Please contact administration.',
-          ERROR_CODES.TENANT_INACTIVE
-        );
-      }
-
-      // 8. Attach user and tenant to request
+      // 7. Attach user to request
       req.user = {
         id: user._id,
         email: user.email,
         name: user.name,
         role: user.role,
-        tenantId: user.tenantId._id,
         permissions: user.permissions,
       };
 
-      req.tenantId = user.tenantId._id;
-      req.tenant = tenant;
-
-      // 9. Update last activity
+      // 8. Update last activity
       user.lastActivity = new Date();
       await user.save();
 
@@ -140,10 +125,8 @@ class AuthMiddleware {
               email: user.email,
               name: user.name,
               role: user.role,
-              tenantId: user.tenantId,
               permissions: user.permissions,
             };
-            req.tenantId = user.tenantId;
           }
         }
       }
@@ -166,8 +149,8 @@ class AuthMiddleware {
           throw new AuthenticationError('Authentication required');
         }
 
-        // Super admin has access to everything
-        if (req.user.role === 'super_admin') {
+        // Admin has access to everything
+        if (req.user.role === ROLES.ADMIN) {
           return next();
         }
 
@@ -197,8 +180,8 @@ class AuthMiddleware {
           throw new AuthenticationError('Authentication required');
         }
 
-        // Super admin and admin have all permissions
-        if (req.user.role === 'super_admin' || req.user.role === 'admin') {
+        // Admin has all permissions
+        if (req.user.role === ROLES.ADMIN) {
           return next();
         }
 
@@ -227,8 +210,8 @@ class AuthMiddleware {
           throw new AuthenticationError('Authentication required');
         }
 
-        // Super admin and admin bypass
-        if (req.user.role === 'super_admin' || req.user.role === 'admin') {
+        // Admin bypass
+        if (req.user.role === ROLES.ADMIN) {
           return next();
         }
 
@@ -274,20 +257,9 @@ class AuthMiddleware {
   }
 }
 
-/**
- * Extract tenant ID and inject into request
- */
-exports.injectTenant = (req, res, next) => {
-  if (req.user && req.user.tenantId) {
-    req.tenantId = req.user.tenantId;
-  }
-  next();
-};
-
-// Export both new class methods and old exports for backward compatibility
+// Export class methods
 module.exports = AuthMiddleware;
 
 // Backward compatibility exports
 module.exports.protect = AuthMiddleware.protect;
 module.exports.authorize = AuthMiddleware.authorize;
-module.exports.injectTenant = exports.injectTenant;

@@ -1,5 +1,5 @@
 // ============================================
-// TEACHER MODEL - MULTI-TENANT COMPATIBLE
+// TEACHER MODEL - SINGLE-TENANT EDITION
 // Professional Production-Ready Version
 // ============================================
 
@@ -68,23 +68,10 @@ const DocumentSchema = new mongoose.Schema({
 // ============================================
 
 const TeacherSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP (MULTI-TENANT) =====
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Tenant",
-    required: [true, "Tenant ID is required"],
-    index: true,
-  },
-  // Keep schoolId for backward compatibility
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "School",
-    required: false,
-  },
-
   // ===== BASIC INFORMATION =====
   employeeId: {
     type: String,
+    unique: true,
     sparse: true,
     index: true
   },
@@ -98,6 +85,7 @@ const TeacherSchema = new mongoose.Schema({
     type: String,
     lowercase: true,
     trim: true,
+    unique: true,
     sparse: true,
     validate: {
       validator: function(v) {
@@ -109,6 +97,8 @@ const TeacherSchema = new mongoose.Schema({
   },
   phone: {
     type: String,
+    unique: true,
+    sparse: true,
     validate: {
       validator: function(v) {
         if (!v) return true;
@@ -318,43 +308,24 @@ const TeacherSchema = new mongoose.Schema({
 // INDEXES FOR PERFORMANCE
 // ============================================
 
-// Multi-tenant scoped unique indexes
-TeacherSchema.index({ tenantId: 1, employeeId: 1 }, { 
-  unique: true, 
-  sparse: true 
-});
-TeacherSchema.index({ tenantId: 1, email: 1 }, { 
-  unique: true, 
-  sparse: true
-});
-TeacherSchema.index({ tenantId: 1, phone: 1 }, { 
-  unique: true, 
-  sparse: true
-});
-TeacherSchema.index({ tenantId: 1, status: 1 });
-TeacherSchema.index({ tenantId: 1, department: 1 });
-TeacherSchema.index({ tenantId: 1, isDeleted: 1 });
+TeacherSchema.index({ status: 1 });
+TeacherSchema.index({ department: 1 });
+TeacherSchema.index({ isDeleted: 1 });
 TeacherSchema.index({ fullName: "text", email: "text", phone: "text", employeeId: "text" });
 
 // ============================================
 // MIDDLEWARE
 // ============================================
 
-// Pre-save hook: Backward compatibility + auto-generate employee ID
+// Pre-save hook: auto-generate employee ID
 TeacherSchema.pre("save", async function(next) {
   try {
-    // Backward compatibility: Copy schoolId to tenantId if missing
-    if (this.schoolId && !this.tenantId) {
-      this.tenantId = this.schoolId;
-    }
-
     // Auto-generate employee ID if new and not provided
     if (this.isNew && !this.employeeId) {
       const year = new Date().getFullYear();
       
       const lastTeacher = await this.constructor
         .findOne({ 
-          tenantId: this.tenantId,
           employeeId: { $exists: true, $ne: null }
         })
         .sort({ employeeId: -1 })
@@ -383,11 +354,10 @@ TeacherSchema.pre("save", async function(next) {
 // STATIC METHODS
 // ============================================
 
-TeacherSchema.statics.getSchoolStats = async function(tenantId) {
+TeacherSchema.statics.getStats = async function() {
   const stats = await this.aggregate([
     { 
       $match: { 
-        tenantId: new mongoose.Types.ObjectId(tenantId),
         isDeleted: false
       } 
     },

@@ -1,5 +1,5 @@
 // ============================================
-// REFRESH TOKEN MODEL
+// REFRESH TOKEN MODEL - SINGLE-TENANT EDITION
 // Stores refresh tokens for JWT authentication
 // Enables token rotation and revocation
 // ============================================
@@ -19,13 +19,6 @@ const refreshTokenSchema = new mongoose.Schema({
     required: true,
     index: true,
   },
- tenantId: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: 'Tenant',
-  required: false, // CHANGED FROM TRUE TO FALSE for backward compatibility
-  index: true,
-},
-
   
   // Token metadata
   issuedAt: {
@@ -91,7 +84,7 @@ refreshTokenSchema.statics.findValidToken = function(token) {
     token,
     isRevoked: false,
     expiresAt: { $gt: new Date() },
-  }).populate('userId tenantId');
+  }).populate('userId');
 };
 
 // Revoke all tokens for user

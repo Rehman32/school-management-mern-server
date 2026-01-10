@@ -1,23 +1,10 @@
 // ============================================
-// GRADE MODEL - MULTI-TENANT COMPATIBLE
+// GRADE MODEL - SINGLE-TENANT EDITION
 // ============================================
 
 const mongoose = require("mongoose");
 
 const GradeSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP =====
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Tenant",
-    required: true,
-    index: true,
-  },
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "School",
-    required: false,
-  },
-
   // ===== EXAM & STUDENT =====
   examId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -70,20 +57,12 @@ const GradeSchema = new mongoose.Schema({
 // ===== UNIQUE CONSTRAINT =====
 // One grade per student per exam per subject
 GradeSchema.index(
-  { tenantId: 1, examId: 1, studentId: 1, subjectId: 1 },
+  { examId: 1, studentId: 1, subjectId: 1 },
   { unique: true }
 );
 
 // ===== INDEXES =====
-GradeSchema.index({ tenantId: 1, studentId: 1 });
-GradeSchema.index({ tenantId: 1, examId: 1 });
-
-// ===== PRE-SAVE HOOK =====
-GradeSchema.pre("save", function(next) {
-  if (this.schoolId && !this.tenantId) {
-    this.tenantId = this.schoolId;
-  }
-  next();
-});
+GradeSchema.index({ studentId: 1 });
+GradeSchema.index({ examId: 1 });
 
 module.exports = mongoose.model("Grade", GradeSchema);

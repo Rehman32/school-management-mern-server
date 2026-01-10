@@ -1,5 +1,5 @@
 // ============================================
-// FEE MODEL - MULTI-TENANT COMPATIBLE
+// FEE MODEL - SINGLE-TENANT EDITION
 // ============================================
 
 const mongoose = require("mongoose");
@@ -35,20 +35,6 @@ const PaymentRecordSchema = new mongoose.Schema({
 
 // Main Fee Schema
 const FeeSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP =====
-  tenantId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: "Tenant", 
-    required: [true, "Tenant ID is required"],
-    index: true 
-  },
-  // Keep schoolId for backward compatibility
-  schoolId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: "School", 
-    required: false
-  },
-
   // ===== STUDENT =====
   student: { 
     type: mongoose.Schema.Types.ObjectId, 
@@ -149,10 +135,10 @@ const FeeSchema = new mongoose.Schema({
 });
 
 // ===== INDEXES =====
-FeeSchema.index({ tenantId: 1, student: 1, month: 1 });
-FeeSchema.index({ tenantId: 1, status: 1, dueDate: 1 });
-FeeSchema.index({ tenantId: 1, feeType: 1 });
-FeeSchema.index({ tenantId: 1, academicYear: 1 });
+FeeSchema.index({ student: 1, month: 1 });
+FeeSchema.index({ status: 1, dueDate: 1 });
+FeeSchema.index({ feeType: 1 });
+FeeSchema.index({ academicYear: 1 });
 
 // ===== VIRTUAL FIELDS =====
 FeeSchema.virtual("balance").get(function() {
@@ -173,11 +159,6 @@ FeeSchema.set("toObject", { virtuals: true });
 
 // ===== PRE-SAVE HOOK =====
 FeeSchema.pre("save", function(next) {
-  // Backward compatibility
-  if (this.schoolId && !this.tenantId) {
-    this.tenantId = this.schoolId;
-  }
-
   // Calculate paid amount
   if (this.paymentRecords && this.paymentRecords.length > 0) {
     this.paidAmount = this.paymentRecords.reduce((sum, record) => sum + record.amount, 0);
@@ -200,8 +181,8 @@ FeeSchema.pre("save", function(next) {
 });
 
 // ===== STATIC METHODS =====
-FeeSchema.statics.getSchoolStats = async function(tenantId, filters = {}) {
-  const match = { tenantId, ...filters };
+FeeSchema.statics.getStats = async function(filters = {}) {
+  const match = { ...filters };
   
   const stats = await this.aggregate([
     { $match: match },
@@ -246,8 +227,8 @@ FeeSchema.statics.getSchoolStats = async function(tenantId, filters = {}) {
   };
 };
 
-FeeSchema.statics.getStudentFees = async function(tenantId, studentId) {
-  return this.find({ tenantId, student: studentId })
+FeeSchema.statics.getStudentFees = async function(studentId) {
+  return this.find({ student: studentId })
     .populate("student", "fullName rollNumber class")
     .sort({ dueDate: -1 });
 };

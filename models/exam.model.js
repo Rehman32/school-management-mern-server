@@ -1,24 +1,10 @@
 // ============================================
-// EXAM MODEL - MULTI-TENANT COMPATIBLE
+// EXAM MODEL - SINGLE-TENANT EDITION
 // ============================================
 
 const mongoose = require("mongoose");
 
 const ExamSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP (REQUIRED) =====
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Tenant",
-    required: [true, "Tenant ID is required"],
-    index: true,
-  },
-  // Keep schoolId for backward compatibility
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "School",
-    required: false,
-  },
-
   // ===== EXAM DETAILS =====
   title: {
     type: String,
@@ -99,18 +85,9 @@ const ExamSchema = new mongoose.Schema({
 });
 
 // ===== INDEXES =====
-ExamSchema.index({ tenantId: 1, classId: 1, date: -1 });
-ExamSchema.index({ tenantId: 1, subjectId: 1 });
-ExamSchema.index({ tenantId: 1, status: 1 });
-ExamSchema.index({ tenantId: 1, isDeleted: 1 });
-
-// ===== PRE-SAVE HOOK =====
-ExamSchema.pre("save", function(next) {
-  // Backward compatibility
-  if (this.schoolId && !this.tenantId) {
-    this.tenantId = this.schoolId;
-  }
-  next();
-});
+ExamSchema.index({ classId: 1, date: -1 });
+ExamSchema.index({ subjectId: 1 });
+ExamSchema.index({ status: 1 });
+ExamSchema.index({ isDeleted: 1 });
 
 module.exports = mongoose.model("Exam", ExamSchema);

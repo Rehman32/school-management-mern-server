@@ -1,5 +1,5 @@
 // ============================================
-// ATTENDANCE MODEL - MULTI-TENANT COMPATIBLE
+// ATTENDANCE MODEL - SINGLE-TENANT EDITION
 // ============================================
 
 const mongoose = require("mongoose");
@@ -39,20 +39,6 @@ const attendanceRecordSchema = new mongoose.Schema({
 
 // Main Attendance Schema
 const AttendanceSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP =====
-  tenantId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: "Tenant", 
-    required: [true, "Tenant ID is required"],
-    index: true 
-  },
-  // Keep schoolId for backward compatibility
-  schoolId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: "School", 
-    required: false
-  },
-
   // ===== CLASS & DATE =====
   classId: { 
     type: mongoose.Schema.Types.ObjectId, 
@@ -140,17 +126,12 @@ const AttendanceSchema = new mongoose.Schema({
 });
 
 // ===== INDEXES =====
-AttendanceSchema.index({ tenantId: 1, classId: 1, date: 1 }, { unique: true });
-AttendanceSchema.index({ tenantId: 1, date: 1 });
+AttendanceSchema.index({ classId: 1, date: 1 }, { unique: true });
+AttendanceSchema.index({ date: 1 });
 AttendanceSchema.index({ "records.student": 1, date: 1 });
 
 // ===== PRE-SAVE HOOK =====
 AttendanceSchema.pre("save", function(next) {
-  // Backward compatibility
-  if (this.schoolId && !this.tenantId) {
-    this.tenantId = this.schoolId;
-  }
-
   // Auto-calculate counts
   this.totalStudents = this.records.length;
   this.presentCount = this.records.filter(r => r.status === "present").length;
@@ -170,8 +151,8 @@ AttendanceSchema.set("toJSON", { virtuals: true });
 AttendanceSchema.set("toObject", { virtuals: true });
 
 // ===== STATIC METHODS =====
-AttendanceSchema.statics.getClassStats = async function(tenantId, classId, startDate, endDate) {
-  const match = { tenantId, classId };
+AttendanceSchema.statics.getClassStats = async function(classId, startDate, endDate) {
+  const match = { classId: new mongoose.Types.ObjectId(classId) };
   
   if (startDate && endDate) {
     match.date = { 
@@ -203,8 +184,8 @@ AttendanceSchema.statics.getClassStats = async function(tenantId, classId, start
   };
 };
 
-AttendanceSchema.statics.getStudentStats = async function(tenantId, studentId, startDate, endDate) {
-  const match = { tenantId };
+AttendanceSchema.statics.getStudentStats = async function(studentId, startDate, endDate) {
+  const match = {};
   
   if (startDate && endDate) {
     match.date = { 

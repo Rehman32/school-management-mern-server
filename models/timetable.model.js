@@ -1,12 +1,10 @@
+// ============================================
+// TIMETABLE MODEL - SINGLE-TENANT EDITION
+// ============================================
+
 const mongoose = require("mongoose");
 
 const TimetableSchema = new mongoose.Schema({
-  schoolId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: "School", 
-    required: true, 
-    index: true 
-  },
   classId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: "Class", 
@@ -42,6 +40,7 @@ const TimetableSchema = new mongoose.Schema({
     type: String, 
     required: true 
   },
+  room: String,
   createdBy: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: "User" 
@@ -49,6 +48,8 @@ const TimetableSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Compound unique index - prevents duplicate entries for same class, day, and period
-TimetableSchema.index({ schoolId: 1, classId: 1, day: 1, period: 1 }, { unique: true });
+TimetableSchema.index({ classId: 1, day: 1, period: 1 }, { unique: true });
+// Prevent teacher double-booking
+TimetableSchema.index({ teacherId: 1, day: 1, period: 1 }, { unique: true });
 
 module.exports = mongoose.model("Timetable", TimetableSchema);

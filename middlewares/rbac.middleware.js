@@ -1,10 +1,10 @@
 // ============================================
-// RBAC MIDDLEWARE
-// Role-Based Access Control with fine-grained permissions
+// RBAC MIDDLEWARE - SINGLE-TENANT EDITION
+// Role-Based Access Control (Admin + Teacher)
 // ============================================
 
 const { AuthorizationError } = require('../utils/errors');
-const { ROLES, PERMISSIONS } = require('../utils/constants');
+const { ROLES } = require('../utils/constants');
 
 class RBACMiddleware {
   /**
@@ -17,8 +17,8 @@ class RBACMiddleware {
           throw new AuthorizationError('Authentication required');
         }
 
-        // Super admin bypasses all checks
-        if (req.user.role === ROLES.SUPER_ADMIN) {
+        // Admin has all access
+        if (req.user.role === ROLES.ADMIN) {
           return next();
         }
 
@@ -36,33 +36,22 @@ class RBACMiddleware {
   }
 
   /**
-   * Check if user has all specified roles (rarely used)
+   * Admin only access
    */
-  static hasAllRoles(...roles) {
-    return (req, res, next) => {
-      try {
-        if (!req.user) {
-          throw new AuthorizationError('Authentication required');
-        }
-
-        // Super admin bypasses
-        if (req.user.role === ROLES.SUPER_ADMIN) {
-          return next();
-        }
-
-        const hasAll = roles.every((role) => req.user.role === role);
-
-        if (!hasAll) {
-          throw new AuthorizationError(
-            `Access denied. Required all roles: ${roles.join(', ')}`
-          );
-        }
-
-        next();
-      } catch (error) {
-        next(error);
+  static adminOnly(req, res, next) {
+    try {
+      if (!req.user) {
+        throw new AuthorizationError('Authentication required');
       }
-    };
+
+      if (req.user.role !== ROLES.ADMIN) {
+        throw new AuthorizationError('Admin access required');
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
   }
 
   /**
@@ -75,8 +64,8 @@ class RBACMiddleware {
           throw new AuthorizationError('Authentication required');
         }
 
-        // Super admin and admin can do anything
-        if (req.user.role === ROLES.SUPER_ADMIN || req.user.role === ROLES.ADMIN) {
+        // Admin can do anything
+        if (req.user.role === ROLES.ADMIN) {
           return next();
         }
 
@@ -105,8 +94,8 @@ class RBACMiddleware {
           throw new AuthorizationError('Authentication required');
         }
 
-        // Super admin bypasses
-        if (req.user.role === ROLES.SUPER_ADMIN) {
+        // Admin bypasses
+        if (req.user.role === ROLES.ADMIN) {
           return next();
         }
 
@@ -140,7 +129,7 @@ class RBACMiddleware {
         const isOwner = resourceUserId && resourceUserId.toString() === req.user.id.toString();
 
         // Check if user has required role
-        const hasRole = roles.includes(req.user.role) || req.user.role === ROLES.SUPER_ADMIN;
+        const hasRole = roles.includes(req.user.role) || req.user.role === ROLES.ADMIN;
 
         if (!isOwner && !hasRole) {
           throw new AuthorizationError(
@@ -166,7 +155,7 @@ class RBACMiddleware {
 
       const targetUserId = req.params.id || req.params.userId;
 
-      const isAdmin = req.user.role === ROLES.ADMIN || req.user.role === ROLES.SUPER_ADMIN;
+      const isAdmin = req.user.role === ROLES.ADMIN;
       const isSelf = targetUserId && targetUserId.toString() === req.user.id.toString();
 
       if (!isAdmin && !isSelf) {

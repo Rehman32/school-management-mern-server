@@ -1,5 +1,5 @@
 // ============================================
-// STUDENT MODEL - MULTI-TENANT COMPATIBLE
+// STUDENT MODEL - SINGLE-TENANT EDITION
 // Professional Production-Ready Version
 // ============================================
 
@@ -90,20 +90,6 @@ const DocumentSchema = new mongoose.Schema({
 // ============================================
 
 const StudentSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP (MULTI-TENANT) =====
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Tenant",
-    required: [true, "Tenant ID is required"],
-    index: true,
-  },
-  // Keep schoolId for backward compatibility
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "School",
-    required: false,
-  },
-
   // ===== BASIC INFORMATION =====
   fullName: { 
     type: String, 
@@ -146,9 +132,9 @@ const StudentSchema = new mongoose.Schema({
   // ===== ACADEMIC INFORMATION =====
   admissionNumber: {
     type: String,
-    required: false,
-    index: true,
-    sparse: true
+    unique: true,
+    sparse: true,
+    index: true
   },
   rollNumber: { 
     type: String,
@@ -299,18 +285,11 @@ const StudentSchema = new mongoose.Schema({
 // INDEXES FOR PERFORMANCE
 // ============================================
 
-// Multi-tenant scoped unique indexes
-StudentSchema.index({ tenantId: 1, admissionNumber: 1 }, { 
-  unique: true, 
-  sparse: true 
-});
-StudentSchema.index({ tenantId: 1, email: 1 }, { 
-  unique: true, 
-  sparse: true
-});
-StudentSchema.index({ tenantId: 1, class: 1, rollNumber: 1 }, { unique: true });
-StudentSchema.index({ tenantId: 1, status: 1 });
-StudentSchema.index({ tenantId: 1, isDeleted: 1 });
+// Unique indexes (single-tenant)
+StudentSchema.index({ email: 1 }, { unique: true, sparse: true });
+StudentSchema.index({ class: 1, rollNumber: 1 }, { unique: true });
+StudentSchema.index({ status: 1 });
+StudentSchema.index({ isDeleted: 1 });
 StudentSchema.index({ fullName: "text" });
 
 // ============================================
@@ -341,21 +320,15 @@ StudentSchema.set("toObject", { virtuals: true });
 // MIDDLEWARE
 // ============================================
 
-// Pre-save hook: Backward compatibility + auto-generate admission number
+// Pre-save hook: auto-generate admission number and split names
 StudentSchema.pre("save", async function(next) {
   try {
-    // Backward compatibility: Copy schoolId to tenantId if missing
-    if (this.schoolId && !this.tenantId) {
-      this.tenantId = this.schoolId;
-    }
-
     // Auto-generate admission number only if new and not provided
     if (this.isNew && !this.admissionNumber) {
       const year = new Date().getFullYear();
       
       const lastStudent = await this.constructor
         .findOne({ 
-          tenantId: this.tenantId,
           admissionNumber: { $exists: true, $ne: null }
         })
         .sort({ admissionNumber: -1 })
@@ -391,11 +364,10 @@ StudentSchema.pre("save", async function(next) {
 // STATIC METHODS
 // ============================================
 
-StudentSchema.statics.getSchoolStats = async function(tenantId) {
+StudentSchema.statics.getStats = async function() {
   const stats = await this.aggregate([
     { 
       $match: { 
-        tenantId: new mongoose.Types.ObjectId(tenantId),
         isDeleted: false
       } 
     },
@@ -424,9 +396,8 @@ StudentSchema.statics.getSchoolStats = async function(tenantId) {
   };
 };
 
-StudentSchema.statics.getByClass = async function(tenantId, classId, options = {}) {
+StudentSchema.statics.getByClass = async function(classId, options = {}) {
   return this.find({ 
-    tenantId,
     class: classId,
     status: options.status || "active",
     isDeleted: false

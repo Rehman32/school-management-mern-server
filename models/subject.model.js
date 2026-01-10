@@ -1,24 +1,10 @@
 // ============================================
-// SUBJECT MODEL - MULTI-TENANT COMPATIBLE
+// SUBJECT MODEL - SINGLE-TENANT EDITION
 // ============================================
 
 const mongoose = require("mongoose");
 
 const SubjectSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP (REQUIRED) =====
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Tenant",
-    required: [true, "Tenant ID is required"],
-    index: true,
-  },
-  // Keep schoolId for backward compatibility
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "School",
-    required: false,
-  },
-
   // ===== BASIC INFORMATION =====
   name: {
     type: String,
@@ -31,6 +17,7 @@ const SubjectSchema = new mongoose.Schema({
     required: [true, "Subject code is required"],
     trim: true,
     uppercase: true,
+    unique: true,
     index: true,
   },
   description: {
@@ -144,18 +131,8 @@ const SubjectSchema = new mongoose.Schema({
 });
 
 // ===== INDEXES =====
-SubjectSchema.index({ tenantId: 1, code: 1 }, { unique: true });
-SubjectSchema.index({ tenantId: 1, name: 1 });
-SubjectSchema.index({ tenantId: 1, status: 1 });
-SubjectSchema.index({ tenantId: 1, isDeleted: 1 });
-
-// ===== PRE-SAVE HOOK =====
-SubjectSchema.pre("save", function(next) {
-  // Backward compatibility
-  if (this.schoolId && !this.tenantId) {
-    this.tenantId = this.schoolId;
-  }
-  next();
-});
+SubjectSchema.index({ name: 1 });
+SubjectSchema.index({ status: 1 });
+SubjectSchema.index({ isDeleted: 1 });
 
 module.exports = mongoose.model("Subject", SubjectSchema);

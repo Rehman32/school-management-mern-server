@@ -1,27 +1,12 @@
 // ============================================
-// ENHANCED USER MODEL (Multi-tenant + Security)
-// BACKWARD COMPATIBLE - Old code still works
+// USER MODEL (Single-Tenant Edition)
+// Admin & Teacher roles for school management
 // ============================================
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  // ===== TENANT RELATIONSHIP (ENHANCED) =====
-  // Changed from schoolId to tenantId for clarity
-  tenantId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Tenant', // Now references Tenant model
-    required: [true, 'Tenant ID is required'],
-    index: true,
-  },
-  // Keep schoolId for backward compatibility during migration
-  schoolId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'School',
-    // Will be deprecated after migration
-  },
-
   // ===== BASIC INFORMATION =====
   name: {
     type: String,
@@ -43,15 +28,15 @@ const userSchema = new mongoose.Schema({
   password: {
     type: String,
     required: [true, 'Please provide a password'],
-    minlength: [8, 'Password must be at least 8 characters long'], // Enhanced from 6
+    minlength: [8, 'Password must be at least 8 characters long'],
     select: false,
   },
 
   // ===== ROLE & PERMISSIONS =====
   role: {
     type: String,
-    enum: ['super_admin', 'admin', 'teacher', 'student', 'parent'], // Added super_admin
-    default: 'student',
+    enum: ['admin', 'teacher'],
+    default: 'admin',
     index: true,
   },
   permissions: [
@@ -62,7 +47,7 @@ const userSchema = new mongoose.Schema({
     },
   ],
 
-  // ===== VERIFICATION & SECURITY (NEW) =====
+  // ===== VERIFICATION & SECURITY =====
   isVerified: {
     type: Boolean,
     default: false,
@@ -95,7 +80,7 @@ const userSchema = new mongoose.Schema({
   },
   twoFactorSecret: String,
 
-  // ===== PROFILE INFORMATION (NEW) =====
+  // ===== PROFILE INFORMATION =====
   profile: {
     avatar: String,
     phone: String,
@@ -113,15 +98,7 @@ const userSchema = new mongoose.Schema({
     },
   },
 
-  // ===== INVITATION SYSTEM (NEW) =====
-  invitedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-  },
-  invitationCode: String,
-  invitationAcceptedAt: Date,
-
-  // ===== ACTIVITY TRACKING (NEW) =====
+  // ===== ACTIVITY TRACKING =====
   lastLogin: Date,
   lastActivity: Date,
   loginCount: {
@@ -129,7 +106,7 @@ const userSchema = new mongoose.Schema({
     default: 0,
   },
 
-  // ===== PREFERENCES (NEW) =====
+  // ===== PREFERENCES =====
   preferences: {
     language: {
       type: String,
@@ -146,7 +123,7 @@ const userSchema = new mongoose.Schema({
     },
   },
 
-  // ===== SOFT DELETE (NEW) =====
+  // ===== SOFT DELETE =====
   isDeleted: {
     type: Boolean,
     default: false,
@@ -167,14 +144,13 @@ const userSchema = new mongoose.Schema({
 });
 
 // ===== INDEXES =====
-userSchema.index({ email: 1, tenantId: 1 }); // Composite index for tenant isolation
-userSchema.index({ role: 1, tenantId: 1 });
+userSchema.index({ email: 1 });
+userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1, isDeleted: 1 });
-userSchema.index({ invitationCode: 1 });
 
 // ===== PRE-SAVE HOOKS =====
 
-// Hash password (EXISTING - KEEP AS IS)
+// Hash password
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
 
@@ -193,17 +169,17 @@ userSchema.pre('save', function (next) {
 
 // ===== INSTANCE METHODS =====
 
-// Compare password (EXISTING - KEEP AS IS)
+// Compare password
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
-// Check if account is locked (NEW)
+// Check if account is locked
 userSchema.methods.isAccountLocked = function () {
   return this.accountLockedUntil && this.accountLockedUntil > new Date();
 };
 
-// Increment failed login attempts (NEW)
+// Increment failed login attempts
 userSchema.methods.incrementFailedLogins = async function () {
   this.failedLoginAttempts += 1;
   this.lastFailedLogin = new Date();
@@ -217,21 +193,21 @@ userSchema.methods.incrementFailedLogins = async function () {
   return this.save();
 };
 
-// Reset failed login attempts (NEW)
+// Reset failed login attempts
 userSchema.methods.resetFailedLogins = async function () {
   this.failedLoginAttempts = 0;
   this.accountLockedUntil = undefined;
   return this.save();
 };
 
-// Update last login (NEW)
+// Update last login
 userSchema.methods.updateLastLogin = async function () {
   this.lastLogin = new Date();
   this.loginCount += 1;
   return this.save();
 };
 
-// Generate email verification token (NEW)
+// Generate email verification token
 userSchema.methods.generateEmailVerificationToken = function () {
   const crypto = require('crypto');
   const token = crypto.randomBytes(32).toString('hex');
@@ -246,7 +222,7 @@ userSchema.methods.generateEmailVerificationToken = function () {
   return token; // Return unhashed token to send via email
 };
 
-// Generate password reset token (NEW)
+// Generate password reset token
 userSchema.methods.generatePasswordResetToken = function () {
   const crypto = require('crypto');
   const token = crypto.randomBytes(32).toString('hex');
@@ -261,33 +237,31 @@ userSchema.methods.generatePasswordResetToken = function () {
   return token; // Return unhashed token
 };
 
-// Check if user has permission (NEW)
+// Check if user has permission
 userSchema.methods.hasPermission = function (permission) {
-  // Super admin and admin have all permissions
-  if (this.role === 'super_admin' || this.role === 'admin') {
+  // Admin has all permissions
+  if (this.role === 'admin') {
     return true;
   }
 
-  // Check in permissions array
+  // Check in permissions array for teachers
   return this.permissions.includes(permission);
 };
 
 // ===== STATIC METHODS =====
 
-// Find active users by tenant (NEW)
-userSchema.statics.findByTenant = function (tenantId) {
+// Find active users
+userSchema.statics.findActiveUsers = function () {
   return this.find({
-    tenantId,
     isActive: true,
     isDeleted: false,
   });
 };
 
-// Find user by email and tenant (NEW)
-userSchema.statics.findByEmailAndTenant = function (email, tenantId) {
+// Find user by email
+userSchema.statics.findByEmail = function (email) {
   return this.findOne({
     email: email.toLowerCase(),
-    tenantId,
     isDeleted: false,
   });
 };
@@ -297,16 +271,6 @@ userSchema.statics.findByEmailAndTenant = function (email, tenantId) {
 // Full name virtual (if you want to split first/last name later)
 userSchema.virtual('displayName').get(function () {
   return this.name;
-});
-
-// ===== BACKWARD COMPATIBILITY =====
-// Keep this for migration period
-userSchema.pre('save', function (next) {
-  // If schoolId exists but tenantId doesn't, copy it
-  if (this.schoolId && !this.tenantId) {
-    this.tenantId = this.schoolId;
-  }
-  next();
 });
 
 // Ensure JSON includes virtuals
