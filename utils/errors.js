@@ -66,13 +66,6 @@ class ConflictError extends ApiError {
   }
 }
 
-// Tenant Error
-class TenantError extends ApiError {
-  constructor(message, errorCode = ERROR_CODES.TENANT_NOT_FOUND) {
-    super(HTTP_STATUS.BAD_REQUEST, message, errorCode);
-  }
-}
-
 module.exports = {
   ApiError,
   AuthenticationError,
@@ -80,5 +73,4 @@ module.exports = {
   ValidationError,
   NotFoundError,
   ConflictError,
-  TenantError,
 };
