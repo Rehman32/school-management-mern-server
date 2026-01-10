@@ -1,5 +1,5 @@
 // ============================================
-// EXAM CONTROLLER - MULTI-TENANT
+// EXAM CONTROLLER - SINGLE-TENANT EDITION
 // ============================================
 
 const mongoose = require("mongoose");
@@ -13,16 +13,7 @@ const Subject = require("../models/subject.model");
 // ============================================
 exports.createExam = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const { classId, subjectId, title, date, totalMarks, examType } = req.body;
 
     // Validate required fields
@@ -48,11 +39,7 @@ exports.createExam = async (req, res) => {
     }
 
     // Validate class exists
-    const classExists = await Class.findOne({
-      _id: classId,
-      tenantId,
-      isDeleted: false
-    });
+    const classExists = await Class.findOne({ _id: classId, isDeleted: false });
     if (!classExists) {
       return res.status(404).json({
         success: false,
@@ -61,11 +48,7 @@ exports.createExam = async (req, res) => {
     }
 
     // Validate subject exists
-    const subjectExists = await Subject.findOne({
-      _id: subjectId,
-      tenantId,
-      isDeleted: false
-    });
+    const subjectExists = await Subject.findOne({ _id: subjectId, isDeleted: false });
     if (!subjectExists) {
       return res.status(404).json({
         success: false,
@@ -75,8 +58,6 @@ exports.createExam = async (req, res) => {
 
     // Create exam
     const payload = {
-      tenantId,
-      schoolId: tenantId, // Backward compatibility
       classId,
       subjectId,
       title,
@@ -120,15 +101,6 @@ exports.createExam = async (req, res) => {
 // ============================================
 exports.listExams = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const {
       page = 1,
       limit = 20,
@@ -138,10 +110,7 @@ exports.listExams = async (req, res) => {
       examType,
     } = req.query;
 
-    const query = {
-      tenantId,
-      isDeleted: false,
-    };
+    const query = { isDeleted: false };
 
     if (classId) query.classId = classId;
     if (subjectId) query.subjectId = subjectId;
@@ -185,16 +154,7 @@ exports.listExams = async (req, res) => {
 // ============================================
 exports.addOrUpdateGrade = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const examId = req.params.examId;
     const { studentId, subjectId, marksObtained, remark } = req.body;
 
@@ -206,11 +166,7 @@ exports.addOrUpdateGrade = async (req, res) => {
     }
 
     // Validate exam exists
-    const exam = await Exam.findOne({
-      _id: examId,
-      tenantId,
-      isDeleted: false
-    });
+    const exam = await Exam.findOne({ _id: examId, isDeleted: false });
 
     if (!exam) {
       return res.status(404).json({
@@ -234,7 +190,6 @@ exports.addOrUpdateGrade = async (req, res) => {
 
     // Upsert grade
     const filter = {
-      tenantId,
       examId,
       studentId,
       subjectId: subjectId || exam.subjectId,
@@ -285,21 +240,9 @@ exports.addOrUpdateGrade = async (req, res) => {
 // ============================================
 exports.listGradesForExam = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const examId = req.params.examId;
 
-    const grades = await Grade.find({
-      tenantId,
-      examId,
-    })
+    const grades = await Grade.find({ examId })
       .populate("studentId", "fullName rollNumber")
       .populate("subjectId", "name code")
       .populate("examId", "title date totalMarks")
@@ -324,21 +267,9 @@ exports.listGradesForExam = async (req, res) => {
 // ============================================
 exports.getStudentGrades = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const studentId = req.params.studentId;
 
-    const grades = await Grade.find({
-      tenantId,
-      studentId,
-    })
+    const grades = await Grade.find({ studentId })
       .populate("examId", "title date totalMarks examType")
       .populate("subjectId", "name code")
       .sort({ "examId.date": -1 })

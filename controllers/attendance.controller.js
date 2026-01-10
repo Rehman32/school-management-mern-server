@@ -1,5 +1,5 @@
 // ============================================
-// ATTENDANCE CONTROLLER - MULTI-TENANT
+// ATTENDANCE CONTROLLER - SINGLE-TENANT EDITION
 // Production-Ready Version
 // ============================================
 
@@ -28,10 +28,9 @@ const validateAttendanceDate = (date) => {
 // ============================================
 // HELPER: Validate Students Belong to Class
 // ============================================
-const validateStudentsInClass = async (tenantId, classId, studentIds) => {
+const validateStudentsInClass = async (classId, studentIds) => {
   const students = await Student.find({
     _id: { $in: studentIds },
-    tenantId,
     class: classId,
     isDeleted: false
   });
@@ -53,16 +52,7 @@ const validateStudentsInClass = async (tenantId, classId, studentIds) => {
 // ============================================
 exports.markAttendance = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-    
+    const userId = req.user?.id;
     const { classId, date, records, session, notes } = req.body;
     
     // Validation
@@ -83,11 +73,7 @@ exports.markAttendance = async (req, res) => {
     }
     
     // Validate class exists
-    const classExists = await Class.findOne({ 
-      _id: classId, 
-      tenantId,
-      isDeleted: false 
-    });
+    const classExists = await Class.findOne({ _id: classId, isDeleted: false });
     if (!classExists) {
       return res.status(404).json({
         success: false,
@@ -97,7 +83,7 @@ exports.markAttendance = async (req, res) => {
     
     // Validate students belong to class
     const studentIds = records.map(r => r.studentId);
-    const studentValidation = await validateStudentsInClass(tenantId, classId, studentIds);
+    const studentValidation = await validateStudentsInClass(classId, studentIds);
     if (!studentValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -119,11 +105,7 @@ exports.markAttendance = async (req, res) => {
     
     // Upsert attendance document
     const attendance = await Attendance.findOneAndUpdate(
-      { 
-        tenantId,
-        classId, 
-        date: dateValidation.date 
-      },
+      { classId, date: dateValidation.date },
       { 
         $set: { 
           records: attendanceRecords,
@@ -131,16 +113,9 @@ exports.markAttendance = async (req, res) => {
           notes: notes || "",
           updatedBy: userId 
         },
-        $setOnInsert: { 
-          createdBy: userId,
-          schoolId: tenantId  // Backward compatibility
-        }
+        $setOnInsert: { createdBy: userId }
       },
-      { 
-        new: true, 
-        upsert: true,
-        runValidators: true
-      }
+      { new: true, upsert: true, runValidators: true }
     );
     
     // Populate and return
@@ -178,16 +153,7 @@ exports.markAttendance = async (req, res) => {
 // ============================================
 exports.markAllPresent = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-    
+    const userId = req.user?.id;
     const { classId, date, session } = req.body;
     
     if (!classId || !date) {
@@ -208,7 +174,6 @@ exports.markAllPresent = async (req, res) => {
     
     // Get all students in class
     const students = await Student.find({ 
-      tenantId,
       class: classId,
       status: "active",
       isDeleted: false
@@ -232,17 +197,10 @@ exports.markAllPresent = async (req, res) => {
     
     // Upsert attendance
     const attendance = await Attendance.findOneAndUpdate(
-      { tenantId, classId, date: dateValidation.date },
+      { classId, date: dateValidation.date },
       { 
-        $set: { 
-          records,
-          session: session || "full-day",
-          updatedBy: userId 
-        },
-        $setOnInsert: { 
-          createdBy: userId,
-          schoolId: tenantId
-        }
+        $set: { records, session: session || "full-day", updatedBy: userId },
+        $setOnInsert: { createdBy: userId }
       },
       { new: true, upsert: true, runValidators: true }
     );
@@ -271,16 +229,7 @@ exports.markAllPresent = async (req, res) => {
 // ============================================
 exports.copyFromPreviousDay = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-    
+    const userId = req.user?.id;
     const { classId, date } = req.body;
     
     if (!classId || !date) {
@@ -303,11 +252,7 @@ exports.copyFromPreviousDay = async (req, res) => {
     const previousDate = new Date(dateValidation.date);
     previousDate.setDate(previousDate.getDate() - 1);
     
-    const previousAttendance = await Attendance.findOne({
-      tenantId,
-      classId,
-      date: previousDate
-    });
+    const previousAttendance = await Attendance.findOne({ classId, date: previousDate });
     
     if (!previousAttendance) {
       return res.status(404).json({
@@ -326,17 +271,14 @@ exports.copyFromPreviousDay = async (req, res) => {
     
     // Create new attendance
     const attendance = await Attendance.findOneAndUpdate(
-      { tenantId, classId, date: dateValidation.date },
+      { classId, date: dateValidation.date },
       {
         $set: {
           records: copiedRecords,
           session: previousAttendance.session,
           updatedBy: userId
         },
-        $setOnInsert: { 
-          createdBy: userId,
-          schoolId: tenantId
-        }
+        $setOnInsert: { createdBy: userId }
       },
       { new: true, upsert: true, runValidators: true }
     );
@@ -365,25 +307,9 @@ exports.copyFromPreviousDay = async (req, res) => {
 // ============================================
 exports.listAttendance = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
+    const { classId, date, startDate, endDate, page = 1, limit = 30 } = req.query;
     
-    const { 
-      classId, 
-      date, 
-      startDate, 
-      endDate,
-      page = 1,
-      limit = 30
-    } = req.query;
-    
-    const filter = { tenantId };
+    const filter = {};
     
     if (classId) filter.classId = classId;
     
@@ -437,22 +363,10 @@ exports.listAttendance = async (req, res) => {
 // ============================================
 exports.getAttendanceById = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
-    const attendance = await Attendance.findOne({ 
-      _id: req.params.id, 
-      tenantId
-    })
-    .populate("records.student", "fullName rollNumber email")
-    .populate("classId", "name grade section")
-    .populate("createdBy updatedBy", "name email");
+    const attendance = await Attendance.findById(req.params.id)
+      .populate("records.student", "fullName rollNumber email")
+      .populate("classId", "name grade section")
+      .populate("createdBy updatedBy", "name email");
     
     if (!attendance) {
       return res.status(404).json({ 
@@ -461,10 +375,7 @@ exports.getAttendanceById = async (req, res) => {
       });
     }
     
-    return res.json({ 
-      success: true, 
-      data: attendance 
-    });
+    return res.json({ success: true, data: attendance });
     
   } catch (err) {
     console.error("getAttendanceById error:", err);
@@ -480,16 +391,7 @@ exports.getAttendanceById = async (req, res) => {
 // ============================================
 exports.updateAttendanceRecord = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-    
+    const userId = req.user?.id;
     const { studentId, status, remark, checkInTime, checkOutTime } = req.body;
     
     if (!studentId || !status) {
@@ -499,10 +401,7 @@ exports.updateAttendanceRecord = async (req, res) => {
       });
     }
     
-    const attendance = await Attendance.findOne({ 
-      _id: req.params.id, 
-      tenantId
-    });
+    const attendance = await Attendance.findById(req.params.id);
     
     if (!attendance) {
       return res.status(404).json({ 
@@ -571,19 +470,7 @@ exports.updateAttendanceRecord = async (req, res) => {
 // ============================================
 exports.deleteAttendance = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-    
-    const attendance = await Attendance.findOne({ 
-      _id: req.params.id, 
-      tenantId
-    });
+    const attendance = await Attendance.findById(req.params.id);
     
     if (!attendance) {
       return res.status(404).json({ 
@@ -622,15 +509,6 @@ exports.deleteAttendance = async (req, res) => {
 // ============================================
 exports.getClassReport = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { classId } = req.params;
     const { startDate, endDate } = req.query;
     
@@ -641,7 +519,7 @@ exports.getClassReport = async (req, res) => {
       });
     }
     
-    const match = { tenantId, classId };
+    const match = { classId: new mongoose.Types.ObjectId(classId) };
     
     if (startDate && endDate) {
       match.date = { 
@@ -658,35 +536,14 @@ exports.getClassReport = async (req, res) => {
         $group: {
           _id: "$records.student",
           total: { $sum: 1 },
-          present: { 
-            $sum: { 
-              $cond: [{ $eq: ["$records.status", "present"] }, 1, 0] 
-            } 
-          },
-          absent: { 
-            $sum: { 
-              $cond: [{ $eq: ["$records.status", "absent"] }, 1, 0] 
-            } 
-          },
-          late: { 
-            $sum: { 
-              $cond: [{ $eq: ["$records.status", "late"] }, 1, 0] 
-            } 
-          },
-          halfDay: { 
-            $sum: { 
-              $cond: [{ $eq: ["$records.status", "half-day"] }, 1, 0] 
-            } 
-          }
+          present: { $sum: { $cond: [{ $eq: ["$records.status", "present"] }, 1, 0] } },
+          absent: { $sum: { $cond: [{ $eq: ["$records.status", "absent"] }, 1, 0] } },
+          late: { $sum: { $cond: [{ $eq: ["$records.status", "late"] }, 1, 0] } },
+          halfDay: { $sum: { $cond: [{ $eq: ["$records.status", "half-day"] }, 1, 0] } }
         }
       },
       {
-        $lookup: { 
-          from: "students", 
-          localField: "_id", 
-          foreignField: "_id", 
-          as: "student" 
-        }
+        $lookup: { from: "students", localField: "_id", foreignField: "_id", as: "student" }
       },
       { $unwind: "$student" },
       {
@@ -694,21 +551,11 @@ exports.getClassReport = async (req, res) => {
           studentId: "$_id",
           fullName: "$student.fullName",
           rollNumber: "$student.rollNumber",
-          total: 1,
-          present: 1,
-          absent: 1,
-          late: 1,
-          halfDay: 1,
+          total: 1, present: 1, absent: 1, late: 1, halfDay: 1,
           percentage: {
             $cond: [
-              { $eq: ["$total", 0] },
-              0,
-              { 
-                $round: [
-                  { $multiply: [{ $divide: ["$present", "$total"] }, 100] },
-                  2
-                ]
-              }
+              { $eq: ["$total", 0] }, 0,
+              { $round: [{ $multiply: [{ $divide: ["$present", "$total"] }, 100] }, 2] }
             ]
           }
         }
@@ -717,19 +564,11 @@ exports.getClassReport = async (req, res) => {
     ]);
     
     // Get overall class statistics
-    const classStats = await Attendance.getClassStats(
-      tenantId,
-      classId, 
-      startDate, 
-      endDate
-    );
+    const classStats = await Attendance.getClassStats(classId, startDate, endDate);
     
     return res.json({ 
       success: true, 
-      data: {
-        students: studentStats,
-        classStats
-      }
+      data: { students: studentStats, classStats }
     });
     
   } catch (err) {
@@ -746,15 +585,6 @@ exports.getClassReport = async (req, res) => {
 // ============================================
 exports.getStudentReport = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { studentId } = req.params;
     const { startDate, endDate } = req.query;
     
@@ -765,46 +595,28 @@ exports.getStudentReport = async (req, res) => {
       });
     }
     
-    // Authorization: students can only view their own report
-    if (req.user.role === "student" && req.user._id.toString() !== studentId) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only view your own attendance"
-      });
-    }
-    
-    const summary = await Attendance.getStudentStats(
-      tenantId,
-      studentId,
-      startDate,
-      endDate
-    );
+    const summary = await Attendance.getStudentStats(studentId, startDate, endDate);
     
     // Get detailed records
-    const match = { tenantId };
+    const match = {};
     
     if (startDate && endDate) {
-      match.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
+      match.date = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
     
     const detailedRecords = await Attendance.aggregate([
       { $match: match },
       { $unwind: "$records" },
-      { 
-        $match: { 
-          "records.student": new mongoose.Types.ObjectId(studentId)
-        } 
+      { $match: { "records.student": new mongoose.Types.ObjectId(studentId) } },
+      {
+        $lookup: { from: "classes", localField: "classId", foreignField: "_id", as: "class" }
       },
+      { $unwind: { path: "$class", preserveNullAndEmptyArrays: true } },
       {
         $project: {
-          date: 1,
-          status: "$records.status",
-          checkInTime: "$records.checkInTime",
-          checkOutTime: "$records.checkOutTime",
-          remark: "$records.remark"
+          date: 1, session: 1, status: "$records.status",
+          remark: "$records.remark",
+          className: "$class.name", grade: "$class.grade", section: "$class.section"
         }
       },
       { $sort: { date: -1 } }
@@ -812,17 +624,14 @@ exports.getStudentReport = async (req, res) => {
     
     return res.json({ 
       success: true, 
-      data: {
-        summary,
-        records: detailedRecords
-      }
+      data: { summary, records: detailedRecords }
     });
     
   } catch (err) {
     console.error("getStudentReport error:", err);
     return res.status(500).json({ 
       success: false, 
-      message: err.message || "Failed to generate student report"
+      message: err.message || "Failed to generate report"
     });
   }
 };
@@ -832,64 +641,36 @@ exports.getStudentReport = async (req, res) => {
 // ============================================
 exports.getMonthlyStats = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { classId, month, year } = req.query;
     
-    if (!month || !year) {
-      return res.status(400).json({
-        success: false,
-        message: "Month and year are required"
-      });
-    }
+    const startDate = new Date(year || new Date().getFullYear(), (month || new Date().getMonth()) - 1, 1);
+    const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
     
-    const startDate = new Date(parseInt(year), parseInt(month) - 1, 1);
-    const endDate = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59, 999);
-    
-    const match = {
-      tenantId,
-      date: { $gte: startDate, $lte: endDate }
-    };
-    
-    if (classId) match.classId = classId;
+    const match = { date: { $gte: startDate, $lte: endDate } };
+    if (classId) match.classId = new mongoose.Types.ObjectId(classId);
     
     const stats = await Attendance.aggregate([
       { $match: match },
+      { $unwind: "$records" },
       {
         $group: {
-          _id: null,
-          totalDays: { $sum: 1 },
-          totalPresent: { $sum: "$presentCount" },
-          totalAbsent: { $sum: "$absentCount" },
-          totalLate: { $sum: "$lateCount" },
-          avgAttendance: { $avg: "$presentCount" }
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          total: { $sum: 1 },
+          present: { $sum: { $cond: [{ $eq: ["$records.status", "present"] }, 1, 0] } },
+          absent: { $sum: { $cond: [{ $eq: ["$records.status", "absent"] }, 1, 0] } },
+          late: { $sum: { $cond: [{ $eq: ["$records.status", "late"] }, 1, 0] } }
         }
-      }
+      },
+      { $sort: { _id: 1 } }
     ]);
     
-    return res.json({
-      success: true,
-      data: stats[0] || {
-        totalDays: 0,
-        totalPresent: 0,
-        totalAbsent: 0,
-        totalLate: 0,
-        avgAttendance: 0
-      }
-    });
+    return res.json({ success: true, data: stats });
     
   } catch (err) {
     console.error("getMonthlyStats error:", err);
-    return res.status(500).json({
-      success: false,
-      message: err.message || "Failed to get monthly statistics"
+    return res.status(500).json({ 
+      success: false, 
+      message: err.message || "Failed to get monthly stats"
     });
   }
-}
+};

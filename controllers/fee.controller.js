@@ -1,5 +1,5 @@
 // ============================================
-// FEE CONTROLLER - MULTI-TENANT (COMPLETE)
+// FEE CONTROLLER - SINGLE-TENANT EDITION
 // ============================================
 
 const Fee = require("../models/fee.model");
@@ -17,16 +17,7 @@ const validateAmount = (amount) => {
 // ============================================
 exports.createFee = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     let studentId;
 
     if (!validateAmount(req.body.amount)) {
@@ -36,29 +27,24 @@ exports.createFee = async (req, res) => {
       });
     }
 
-    if (req.user.role === "student") {
-      studentId = req.user._id;
-    } else {
-      studentId = req.body.student;
-      if (!studentId) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Student is required" 
-        });
-      }
-      
-      const studentExists = await Student.findOne({ 
-        _id: studentId, 
-        tenantId,
-        isDeleted: false
+    studentId = req.body.student;
+    if (!studentId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Student is required" 
       });
+    }
+    
+    const studentExists = await Student.findOne({ 
+      _id: studentId, 
+      isDeleted: false
+    });
 
-      if (!studentExists) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Invalid student for this school" 
-        });
-      }
+    if (!studentExists) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid student" 
+      });
     }
 
     if (req.body.dueDate && new Date(req.body.dueDate) < new Date(new Date().setHours(0, 0, 0, 0))) {
@@ -71,8 +57,6 @@ exports.createFee = async (req, res) => {
     const payload = {
       ...req.body,
       student: studentId,
-      tenantId,
-      schoolId: tenantId,
       createdBy: userId,
       updatedBy: userId,
       paidAmount: 0
@@ -114,15 +98,6 @@ exports.createFee = async (req, res) => {
 // ============================================
 exports.listFees = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { 
       status, 
       feeType, 
@@ -135,14 +110,9 @@ exports.listFees = async (req, res) => {
       limit = 50
     } = req.query;
 
-    const query = { tenantId };
+    const query = {};
 
-    if (req.user.role === "student") {
-      query.student = req.user._id;
-    } else if (student) {
-      query.student = student;
-    }
-
+    if (student) query.student = student;
     if (status) query.status = status;
     if (feeType) query.feeType = feeType;
     if (month) query.month = month;
@@ -193,24 +163,15 @@ exports.listFees = async (req, res) => {
 // ============================================
 exports.getStatistics = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const filters = {};
     if (req.query.feeType) filters.feeType = req.query.feeType;
     if (req.query.month) filters.month = req.query.month;
     if (req.query.academicYear) filters.academicYear = req.query.academicYear;
     
-    const stats = await Fee.getSchoolStats(tenantId, filters);
+    const stats = await Fee.getStats(filters);
     
     const statusCounts = await Fee.aggregate([
-      { $match: { tenantId, ...filters } },
+      { $match: filters },
       { $group: { _id: "$status", count: { $sum: 1 } } }
     ]);
     
@@ -241,16 +202,7 @@ exports.getStatistics = async (req, res) => {
 // ============================================
 exports.updateFee = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const { id } = req.params;
     
     if (req.body.amount && !validateAmount(req.body.amount)) {
@@ -260,7 +212,7 @@ exports.updateFee = async (req, res) => {
       });
     }
     
-    const existing = await Fee.findOne({ _id: id, tenantId });
+    const existing = await Fee.findById(id);
     if (!existing) {
       return res.status(404).json({ 
         success: false, 
@@ -273,8 +225,6 @@ exports.updateFee = async (req, res) => {
       updatedBy: userId 
     };
     
-    delete update.tenantId;
-    delete update.schoolId;
     delete update.paymentRecords;
     delete update.paidAmount;
     delete update.createdBy;
@@ -317,16 +267,7 @@ exports.updateFee = async (req, res) => {
 // ============================================
 exports.recordPayment = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const { id } = req.params;
     const { amount, method, transactionId, notes } = req.body;
     
@@ -337,7 +278,7 @@ exports.recordPayment = async (req, res) => {
       });
     }
     
-    const fee = await Fee.findOne({ _id: id, tenantId });
+    const fee = await Fee.findById(id);
     if (!fee) {
       return res.status(404).json({ 
         success: false, 
@@ -391,25 +332,9 @@ exports.recordPayment = async (req, res) => {
 // ============================================
 exports.getStudentFees = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { studentId } = req.params;
     
-    if (req.user.role === "student" && req.user._id.toString() !== studentId) {
-      return res.status(403).json({
-        success: false,
-        message: "You can only view your own fees"
-      });
-    }
-    
-    const fees = await Fee.getStudentFees(tenantId, studentId);
+    const fees = await Fee.getStudentFees(studentId);
     
     return res.json({
       success: true,
@@ -426,20 +351,11 @@ exports.getStudentFees = async (req, res) => {
 };
 
 // ============================================
-// BULK GENERATE FEES (FIXED)
+// BULK GENERATE FEES
 // ============================================
 exports.bulkGenerateFees = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const { 
       classId, 
       amount, 
@@ -466,7 +382,6 @@ exports.bulkGenerateFees = async (req, res) => {
     
     const classExists = await Class.findOne({ 
       _id: classId, 
-      tenantId,
       isDeleted: false 
     });
     
@@ -478,7 +393,6 @@ exports.bulkGenerateFees = async (req, res) => {
     }
     
     const students = await Student.find({ 
-      tenantId,
       class: classId,
       status: "active",
       isDeleted: false
@@ -493,8 +407,6 @@ exports.bulkGenerateFees = async (req, res) => {
     
     const feePromises = students.map(student => 
       Fee.create({
-        tenantId,
-        schoolId: tenantId,
         student: student._id,
         amount: parseFloat(amount),
         feeType: feeType || "tuition",
@@ -538,18 +450,9 @@ exports.bulkGenerateFees = async (req, res) => {
 // ============================================
 exports.deleteFee = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { id } = req.params;
     
-    const fee = await Fee.findOne({ _id: id, tenantId });
+    const fee = await Fee.findById(id);
     
     if (!fee) {
       return res.status(404).json({ 
@@ -587,18 +490,9 @@ exports.deleteFee = async (req, res) => {
 // ============================================
 exports.deletePayment = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { id, paymentId } = req.params;
     
-    const fee = await Fee.findOne({ _id: id, tenantId });
+    const fee = await Fee.findById(id);
     if (!fee) {
       return res.status(404).json({ 
         success: false, 
@@ -610,7 +504,7 @@ exports.deletePayment = async (req, res) => {
       p => p._id.toString() !== paymentId
     );
     
-    fee.updatedBy = req.user._id;
+    fee.updatedBy = req.user?.id;
     await fee.save();
     
     return res.json({

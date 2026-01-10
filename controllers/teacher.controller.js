@@ -1,12 +1,11 @@
 // ============================================
-// TEACHER CONTROLLER - MULTI-TENANT
+// TEACHER CONTROLLER - SINGLE-TENANT EDITION
 // Professional Production-Ready Version
 // ============================================
 
 const Teacher = require("../models/teacher.model");
 const Class = require("../models/class.model");
 const Subject = require("../models/subject.model");
-const mongoose = require("mongoose");
 
 // ============================================
 // HELPER FUNCTIONS
@@ -31,15 +30,6 @@ const validateTeacher = (data) => {
 // ============================================
 exports.listTeachers = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const {
       page = 1,
       limit = 20,
@@ -52,14 +42,9 @@ exports.listTeachers = async (req, res) => {
     } = req.query;
     
     // Build query
-    const query = { 
-      tenantId,
-      isDeleted: false
-    };
+    const query = { isDeleted: false };
     
-    if (status && status !== "all") {
-      query.status = status;
-    }
+    if (status && status !== "all") query.status = status;
     if (department) query.department = department;
     if (employmentType) query.employmentType = employmentType;
     if (gender) query.gender = gender;
@@ -112,18 +97,8 @@ exports.listTeachers = async (req, res) => {
 // ============================================
 exports.getTeacherById = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const teacher = await Teacher.findOne({ 
       _id: req.params.id, 
-      tenantId,
       isDeleted: false
     })
     .populate("subjects", "name code")
@@ -153,15 +128,7 @@ exports.getTeacherById = async (req, res) => {
 // ============================================
 exports.createTeacher = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
+    const userId = req.user?.id;
     
     // Validate input
     const validation = validateTeacher(req.body);
@@ -172,10 +139,9 @@ exports.createTeacher = async (req, res) => {
       });
     }
     
-    // Check for duplicate email within tenant
+    // Check for duplicate email
     if (req.body.email) {
       const existingTeacher = await Teacher.findOne({
-        tenantId,
         email: req.body.email.toLowerCase(),
         isDeleted: false
       });
@@ -188,10 +154,9 @@ exports.createTeacher = async (req, res) => {
       }
     }
 
-    // Check for duplicate phone within tenant
+    // Check for duplicate phone
     if (req.body.phone) {
       const existingPhone = await Teacher.findOne({
-        tenantId,
         phone: req.body.phone,
         isDeleted: false
       });
@@ -207,7 +172,6 @@ exports.createTeacher = async (req, res) => {
     // Check for duplicate employee ID
     if (req.body.employeeId) {
       const existingEmpId = await Teacher.findOne({
-        tenantId,
         employeeId: req.body.employeeId,
         isDeleted: false
       });
@@ -220,42 +184,37 @@ exports.createTeacher = async (req, res) => {
       }
     }
     
-    // Validate subjects exist in this tenant
+    // Validate subjects exist
     if (req.body.subjects && req.body.subjects.length > 0) {
       const subjectsExist = await Subject.countDocuments({
-        _id: { $in: req.body.subjects },
-        tenantId
+        _id: { $in: req.body.subjects }
       });
       
       if (subjectsExist !== req.body.subjects.length) {
         return res.status(404).json({
           success: false,
-          message: "One or more subjects not found in your school"
+          message: "One or more subjects not found"
         });
       }
     }
     
-    // Validate classes exist in this tenant
+    // Validate classes exist
     if (req.body.classes && req.body.classes.length > 0) {
       const classesExist = await Class.countDocuments({
-        _id: { $in: req.body.classes },
-        tenantId
+        _id: { $in: req.body.classes }
       });
       
       if (classesExist !== req.body.classes.length) {
         return res.status(404).json({
           success: false,
-          message: "One or more classes not found in your school"
+          message: "One or more classes not found"
         });
       }
     }
 
     // Validate classTeacherOf if provided
     if (req.body.isClassTeacher && req.body.classTeacherOf) {
-      const classExists = await Class.findOne({
-        _id: req.body.classTeacherOf,
-        tenantId
-      });
+      const classExists = await Class.findById(req.body.classTeacherOf);
 
       if (!classExists) {
         return res.status(404).json({
@@ -266,7 +225,6 @@ exports.createTeacher = async (req, res) => {
 
       // Check if class already has a class teacher
       const existingClassTeacher = await Teacher.findOne({
-        tenantId,
         classTeacherOf: req.body.classTeacherOf,
         isDeleted: false,
         status: "Active"
@@ -283,8 +241,6 @@ exports.createTeacher = async (req, res) => {
     // Create teacher
     const teacherData = {
       ...req.body,
-      tenantId,
-      schoolId: tenantId, // Backward compatibility
       createdBy: userId,
       updatedBy: userId
     };
@@ -334,20 +290,11 @@ exports.createTeacher = async (req, res) => {
 // ============================================
 exports.updateTeacher = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
+    const userId = req.user?.id;
     
     // Find existing teacher
     const existing = await Teacher.findOne({ 
       _id: req.params.id, 
-      tenantId,
       isDeleted: false
     });
     
@@ -362,7 +309,6 @@ exports.updateTeacher = async (req, res) => {
     if (req.body.email && req.body.email !== existing.email) {
       const emailExists = await Teacher.findOne({
         _id: { $ne: req.params.id },
-        tenantId,
         email: req.body.email.toLowerCase(),
         isDeleted: false
       });
@@ -379,7 +325,6 @@ exports.updateTeacher = async (req, res) => {
     if (req.body.phone && req.body.phone !== existing.phone) {
       const phoneExists = await Teacher.findOne({
         _id: { $ne: req.params.id },
-        tenantId,
         phone: req.body.phone,
         isDeleted: false
       });
@@ -395,10 +340,7 @@ exports.updateTeacher = async (req, res) => {
     // Validate classTeacherOf if being assigned
     if (req.body.isClassTeacher && req.body.classTeacherOf) {
       if (req.body.classTeacherOf !== existing.classTeacherOf?.toString()) {
-        const classExists = await Class.findOne({
-          _id: req.body.classTeacherOf,
-          tenantId
-        });
+        const classExists = await Class.findById(req.body.classTeacherOf);
 
         if (!classExists) {
           return res.status(404).json({
@@ -410,7 +352,6 @@ exports.updateTeacher = async (req, res) => {
         // Check if class already has another class teacher
         const existingClassTeacher = await Teacher.findOne({
           _id: { $ne: req.params.id },
-          tenantId,
           classTeacherOf: req.body.classTeacherOf,
           isDeleted: false,
           status: "Active"
@@ -433,8 +374,7 @@ exports.updateTeacher = async (req, res) => {
     // Validate subjects if provided
     if (req.body.subjects && req.body.subjects.length > 0) {
       const subjectsExist = await Subject.countDocuments({
-        _id: { $in: req.body.subjects },
-        tenantId
+        _id: { $in: req.body.subjects }
       });
       
       if (subjectsExist !== req.body.subjects.length) {
@@ -448,8 +388,7 @@ exports.updateTeacher = async (req, res) => {
     // Validate classes if provided
     if (req.body.classes && req.body.classes.length > 0) {
       const classesExist = await Class.countDocuments({
-        _id: { $in: req.body.classes },
-        tenantId
+        _id: { $in: req.body.classes }
       });
       
       if (classesExist !== req.body.classes.length) {
@@ -466,11 +405,9 @@ exports.updateTeacher = async (req, res) => {
       updatedBy: userId
     };
     
-    // Don't allow changing tenantId, schoolId, or createdBy
-    delete updateData.tenantId;
-    delete updateData.schoolId;
+    // Don't allow changing these
     delete updateData.createdBy;
-    delete updateData.employeeId; // Don't allow changing employee ID
+    delete updateData.employeeId;
     
     const updatedTeacher = await Teacher.findByIdAndUpdate(
       req.params.id,
@@ -517,19 +454,10 @@ exports.updateTeacher = async (req, res) => {
 // ============================================
 exports.deleteTeacher = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
+    const userId = req.user?.id;
     
     const teacher = await Teacher.findOne({ 
       _id: req.params.id, 
-      tenantId,
       isDeleted: false
     });
     
@@ -566,50 +494,19 @@ exports.deleteTeacher = async (req, res) => {
 // ============================================
 exports.getStatistics = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-    
-    const stats = await Teacher.getSchoolStats(tenantId);
+    const stats = await Teacher.getStats();
     
     // Get department-wise count
     const departmentCounts = await Teacher.aggregate([
-      { 
-        $match: { 
-          tenantId: new mongoose.Types.ObjectId(tenantId),
-          status: "Active",
-          isDeleted: false
-        } 
-      },
-      { 
-        $group: { 
-          _id: "$department", 
-          count: { $sum: 1 } 
-        } 
-      },
+      { $match: { status: "Active", isDeleted: false } },
+      { $group: { _id: "$department", count: { $sum: 1 } } },
       { $sort: { count: -1 } }
     ]);
 
     // Get employment type distribution
     const employmentTypes = await Teacher.aggregate([
-      { 
-        $match: { 
-          tenantId: new mongoose.Types.ObjectId(tenantId),
-          status: "Active",
-          isDeleted: false
-        } 
-      },
-      { 
-        $group: { 
-          _id: "$employmentType", 
-          count: { $sum: 1 } 
-        } 
-      }
+      { $match: { status: "Active", isDeleted: false } },
+      { $group: { _id: "$employmentType", count: { $sum: 1 } } }
     ]);
     
     res.json({
@@ -634,17 +531,7 @@ exports.getStatistics = async (req, res) => {
 // ============================================
 exports.getDepartments = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const departments = await Teacher.distinct("department", {
-      tenantId,
       isDeleted: false,
       department: { $ne: null, $ne: "" }
     });
@@ -667,16 +554,7 @@ exports.getDepartments = async (req, res) => {
 // ============================================
 exports.bulkUpdateStatus = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const { teacherIds, status, reason } = req.body;
     
     if (!teacherIds || !Array.isArray(teacherIds) || teacherIds.length === 0) {
@@ -703,11 +581,7 @@ exports.bulkUpdateStatus = async (req, res) => {
     
     // Update teachers
     const result = await Teacher.updateMany(
-      {
-        _id: { $in: teacherIds },
-        tenantId,
-        isDeleted: false
-      },
+      { _id: { $in: teacherIds }, isDeleted: false },
       {
         $set: { status },
         $push: {
@@ -740,16 +614,7 @@ exports.bulkUpdateStatus = async (req, res) => {
 // ============================================
 exports.bulkDelete = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const { teacherIds } = req.body;
     
     if (!teacherIds || !Array.isArray(teacherIds) || teacherIds.length === 0) {
@@ -761,11 +626,7 @@ exports.bulkDelete = async (req, res) => {
     
     // Soft delete
     const result = await Teacher.updateMany(
-      {
-        _id: { $in: teacherIds },
-        tenantId,
-        isDeleted: false
-      },
+      { _id: { $in: teacherIds }, isDeleted: false },
       {
         $set: {
           isDeleted: true,
@@ -795,15 +656,6 @@ exports.bulkDelete = async (req, res) => {
 // ============================================
 exports.assignSubjects = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { teacherId, subjectIds } = req.body;
 
     if (!teacherId || !subjectIds || !Array.isArray(subjectIds)) {
@@ -814,11 +666,7 @@ exports.assignSubjects = async (req, res) => {
     }
 
     // Validate teacher exists
-    const teacher = await Teacher.findOne({
-      _id: teacherId,
-      tenantId,
-      isDeleted: false
-    });
+    const teacher = await Teacher.findOne({ _id: teacherId, isDeleted: false });
 
     if (!teacher) {
       return res.status(404).json({
@@ -828,10 +676,7 @@ exports.assignSubjects = async (req, res) => {
     }
 
     // Validate subjects exist
-    const subjects = await Subject.countDocuments({
-      _id: { $in: subjectIds },
-      tenantId
-    });
+    const subjects = await Subject.countDocuments({ _id: { $in: subjectIds } });
 
     if (subjects !== subjectIds.length) {
       return res.status(404).json({
@@ -865,15 +710,6 @@ exports.assignSubjects = async (req, res) => {
 // ============================================
 exports.assignClasses = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const { teacherId, classIds } = req.body;
 
     if (!teacherId || !classIds || !Array.isArray(classIds)) {
@@ -884,11 +720,7 @@ exports.assignClasses = async (req, res) => {
     }
 
     // Validate teacher exists
-    const teacher = await Teacher.findOne({
-      _id: teacherId,
-      tenantId,
-      isDeleted: false
-    });
+    const teacher = await Teacher.findOne({ _id: teacherId, isDeleted: false });
 
     if (!teacher) {
       return res.status(404).json({
@@ -898,10 +730,7 @@ exports.assignClasses = async (req, res) => {
     }
 
     // Validate classes exist
-    const classes = await Class.countDocuments({
-      _id: { $in: classIds },
-      tenantId
-    });
+    const classes = await Class.countDocuments({ _id: { $in: classIds } });
 
     if (classes !== classIds.length) {
       return res.status(404).json({
@@ -930,11 +759,13 @@ exports.assignClasses = async (req, res) => {
   }
 };
 
+// ============================================
+// GET TEACHERS MINIMAL (for dropdowns)
+// ============================================
 exports.getTeachersMinimal = async (req, res) => {
   try {
-    const { schoolId } = req.user;
     const { search = "", limit = 1000 } = req.query;
-    const filter = { schoolId, isDeleted: false };
+    const filter = { isDeleted: false };
 
     if (search && search.trim()) {
       const s = search.trim();

@@ -1,26 +1,16 @@
 // ============================================
-// SUBJECT CONTROLLER - MULTI-TENANT
+// SUBJECT CONTROLLER - SINGLE-TENANT EDITION
 // ============================================
 
 const Subject = require("../models/subject.model");
 const Class = require("../models/class.model");
-const User = require("../models/user.model");
-const mongoose = require("mongoose");
+const Teacher = require("../models/teacher.model");
 
 // ============================================
 // LIST SUBJECTS
 // ============================================
 exports.listSubjects = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const {
       page = 1,
       limit = 50,
@@ -31,10 +21,7 @@ exports.listSubjects = async (req, res) => {
       status = "active",
     } = req.query;
 
-    const query = {
-      tenantId,
-      isDeleted: false,
-    };
+    const query = { isDeleted: false };
 
     if (status && status !== "all") query.status = status;
     if (category) query.category = category;
@@ -85,18 +72,8 @@ exports.listSubjects = async (req, res) => {
 // ============================================
 exports.getSubjectById = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const subject = await Subject.findOne({
       _id: req.params.id,
-      tenantId,
       isDeleted: false,
     })
       .populate("teachers", "fullName email")
@@ -128,15 +105,7 @@ exports.getSubjectById = async (req, res) => {
 // ============================================
 exports.createSubject = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
+    const userId = req.user?.id;
 
     if (!req.body.name || !req.body.code) {
       return res.status(400).json({
@@ -147,7 +116,6 @@ exports.createSubject = async (req, res) => {
 
     // Check for duplicate code
     const duplicate = await Subject.findOne({
-      tenantId,
       code: req.body.code.toUpperCase(),
       isDeleted: false,
     });
@@ -161,10 +129,8 @@ exports.createSubject = async (req, res) => {
 
     // Validate teachers if provided
     if (req.body.teachers && req.body.teachers.length > 0) {
-      const teachersExist = await User.countDocuments({
+      const teachersExist = await Teacher.countDocuments({
         _id: { $in: req.body.teachers },
-        tenantId,
-        role: "teacher",
         isDeleted: false,
       });
 
@@ -180,7 +146,6 @@ exports.createSubject = async (req, res) => {
     if (req.body.classes && req.body.classes.length > 0) {
       const classesExist = await Class.countDocuments({
         _id: { $in: req.body.classes },
-        tenantId,
         isDeleted: false,
       });
 
@@ -195,8 +160,6 @@ exports.createSubject = async (req, res) => {
     // Create subject
     const subjectData = {
       ...req.body,
-      tenantId,
-      schoolId: tenantId, // Backward compatibility
       createdBy: userId,
       updatedBy: userId,
     };
@@ -242,19 +205,10 @@ exports.createSubject = async (req, res) => {
 // ============================================
 exports.updateSubject = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
+    const userId = req.user?.id;
 
     const existing = await Subject.findOne({
       _id: req.params.id,
-      tenantId,
       isDeleted: false,
     });
 
@@ -269,7 +223,6 @@ exports.updateSubject = async (req, res) => {
     if (req.body.code && req.body.code.toUpperCase() !== existing.code) {
       const duplicate = await Subject.findOne({
         _id: { $ne: req.params.id },
-        tenantId,
         code: req.body.code.toUpperCase(),
         isDeleted: false,
       });
@@ -284,10 +237,8 @@ exports.updateSubject = async (req, res) => {
 
     // Validate teachers if provided
     if (req.body.teachers) {
-      const teachersExist = await User.countDocuments({
+      const teachersExist = await Teacher.countDocuments({
         _id: { $in: req.body.teachers },
-        tenantId,
-        role: "teacher",
         isDeleted: false,
       });
 
@@ -303,7 +254,6 @@ exports.updateSubject = async (req, res) => {
     if (req.body.classes) {
       const classesExist = await Class.countDocuments({
         _id: { $in: req.body.classes },
-        tenantId,
         isDeleted: false,
       });
 
@@ -320,8 +270,6 @@ exports.updateSubject = async (req, res) => {
       updatedBy: userId,
     };
 
-    delete updateData.tenantId;
-    delete updateData.schoolId;
     delete updateData.createdBy;
 
     const updatedSubject = await Subject.findByIdAndUpdate(
@@ -367,18 +315,8 @@ exports.updateSubject = async (req, res) => {
 // ============================================
 exports.deleteSubject = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const subject = await Subject.findOne({
       _id: req.params.id,
-      tenantId,
       isDeleted: false,
     });
 
@@ -413,22 +351,8 @@ exports.deleteSubject = async (req, res) => {
 // ============================================
 exports.getStatistics = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
     const stats = await Subject.aggregate([
-      {
-        $match: {
-          tenantId: new mongoose.Types.ObjectId(tenantId),
-          isDeleted: false
-        }
-      },
+      { $match: { isDeleted: false } },
       {
         $group: {
           _id: null,
@@ -442,19 +366,8 @@ exports.getStatistics = async (req, res) => {
 
     // Get category-wise count
     const categoryCounts = await Subject.aggregate([
-      {
-        $match: {
-          tenantId: new mongoose.Types.ObjectId(tenantId),
-          status: "active",
-          isDeleted: false
-        }
-      },
-      {
-        $group: {
-          _id: "$category",
-          count: { $sum: 1 }
-        }
-      }
+      { $match: { status: "active", isDeleted: false } },
+      { $group: { _id: "$category", count: { $sum: 1 } } }
     ]);
 
     res.json({
@@ -478,16 +391,7 @@ exports.getStatistics = async (req, res) => {
 // ============================================
 exports.bulkCreateSubjects = async (req, res) => {
   try {
-    const tenantId = req.user?.tenantId || req.tenantId;
-    const userId = req.user?._id;
-
-    if (!tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: "Tenant ID is required"
-      });
-    }
-
+    const userId = req.user?.id;
     const { subjects } = req.body;
 
     if (!subjects || !Array.isArray(subjects) || subjects.length === 0) {
@@ -497,27 +401,19 @@ exports.bulkCreateSubjects = async (req, res) => {
       });
     }
 
-    const results = {
-      success: [],
-      failed: [],
-    };
+    const results = { success: [], failed: [] };
 
     for (const subjectData of subjects) {
       try {
         const newSubject = new Subject({
           ...subjectData,
-          tenantId,
-          schoolId: tenantId,
           createdBy: userId,
           updatedBy: userId,
         });
         await newSubject.save();
         results.success.push(newSubject);
       } catch (err) {
-        results.failed.push({
-          data: subjectData,
-          error: err.message,
-        });
+        results.failed.push({ data: subjectData, error: err.message });
       }
     }
 
