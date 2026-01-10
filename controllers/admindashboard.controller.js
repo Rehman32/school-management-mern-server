@@ -1,21 +1,18 @@
 // ============================================
-// DASHBOARD CONTROLLER
-// server/controllers/dashboard.controller.js
+// DASHBOARD CONTROLLER - SINGLE-TENANT EDITION
+// Real-time analytics with MongoDB aggregation
 // ============================================
 
 const Student = require('../models/student.model');
 const Teacher = require('../models/teacher.model');
 const Class = require('../models/class.model');
 const Subject = require('../models/subject.model');
-const School = require('../models/school.model');
-const User = require('../models/user.model');
 
 // ============================================
 // GET DASHBOARD STATISTICS
 // ============================================
 exports.getStatistics = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const currentDate = new Date();
     const lastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
 
@@ -30,14 +27,14 @@ exports.getStatistics = async (req, res) => {
       lastMonthStudents,
       lastMonthTeachers,
     ] = await Promise.all([
-      Student.countDocuments({ schoolId, isDeleted: false }),
-      Teacher.countDocuments({ schoolId, isDeleted: false }),
-      Class.countDocuments({ schoolId, isDeleted: false, status: 'active' }),
-      Subject.countDocuments({ schoolId, isDeleted: false, status: 'active' }),
-      Student.countDocuments({ schoolId, isDeleted: false, status: 'active' }),
-      Teacher.countDocuments({ schoolId, isDeleted: false, status: 'Active' }),
-      Student.countDocuments({ schoolId, createdAt: { $lt: lastMonth } }),
-      Teacher.countDocuments({ schoolId, createdAt: { $lt: lastMonth } }),
+      Student.countDocuments({ isDeleted: false }),
+      Teacher.countDocuments({ isDeleted: false }),
+      Class.countDocuments({ isDeleted: false, status: 'active' }),
+      Subject.countDocuments({ isDeleted: false, status: 'active' }),
+      Student.countDocuments({ isDeleted: false, status: 'active' }),
+      Teacher.countDocuments({ isDeleted: false, status: 'Active' }),
+      Student.countDocuments({ createdAt: { $lt: lastMonth } }),
+      Teacher.countDocuments({ createdAt: { $lt: lastMonth } }),
     ]);
 
     // Calculate growth percentages
@@ -51,13 +48,13 @@ exports.getStatistics = async (req, res) => {
 
     // Get gender distribution
     const [maleStudents, femaleStudents] = await Promise.all([
-      Student.countDocuments({ schoolId, gender: 'male', isDeleted: false }),
-      Student.countDocuments({ schoolId, gender: 'female', isDeleted: false }),
+      Student.countDocuments({ gender: 'male', isDeleted: false }),
+      Student.countDocuments({ gender: 'female', isDeleted: false }),
     ]);
 
     // Get class capacity info
     const classCapacity = await Class.aggregate([
-      { $match: { schoolId, isDeleted: false, status: 'active' } },
+      { $match: { isDeleted: false, status: 'active' } },
       {
         $group: {
           _id: null,
@@ -109,12 +106,10 @@ exports.getStatistics = async (req, res) => {
 // ============================================
 exports.getRecentActivities = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
     const limit = parseInt(req.query.limit) || 10;
 
     // Get recent students (last 7 days)
     const recentStudents = await Student.find({
-      schoolId,
       createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
     })
       .sort({ createdAt: -1 })
@@ -124,7 +119,6 @@ exports.getRecentActivities = async (req, res) => {
 
     // Get recent teachers (last 7 days)
     const recentTeachers = await Teacher.find({
-      schoolId,
       createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
     })
       .sort({ createdAt: -1 })
@@ -134,7 +128,6 @@ exports.getRecentActivities = async (req, res) => {
 
     // Get recent classes (last 7 days)
     const recentClasses = await Class.find({
-      schoolId,
       createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
     })
       .sort({ createdAt: -1 })
@@ -194,12 +187,9 @@ exports.getRecentActivities = async (req, res) => {
 // ============================================
 exports.getGradeDistribution = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-
     const distribution = await Class.aggregate([
       {
         $match: {
-          schoolId,
           isDeleted: false,
           status: 'active',
         },
@@ -233,12 +223,9 @@ exports.getGradeDistribution = async (req, res) => {
 // ============================================
 exports.getTeacherSummary = async (req, res) => {
   try {
-    const schoolId = req.user.schoolId;
-
     const summary = await Teacher.aggregate([
       {
         $match: {
-          schoolId,
           isDeleted: false,
         },
       },
