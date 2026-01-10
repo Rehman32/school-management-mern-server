@@ -1,15 +1,13 @@
 // ============================================
-// SYSTEM CONSTANTS
+// SYSTEM CONSTANTS (Single-Tenant Edition)
 // ============================================
 
 module.exports = {
   // ===== ROLES =====
+  // Simplified for single-tenant: admin runs everything, teacher for future use
   ROLES: {
-    SUPER_ADMIN: 'super_admin',
     ADMIN: 'admin',
     TEACHER: 'teacher',
-    STUDENT: 'student',
-    PARENT: 'parent',
   },
 
   // ===== PERMISSIONS =====
@@ -56,49 +54,12 @@ module.exports = {
     REPORT_GENERATE: 'report.generate',
   },
 
-  // ===== SUBSCRIPTION PLANS =====
-  SUBSCRIPTION_PLANS: {
-    TRIAL: {
-      name: 'trial',
-      maxStudents: 50,
-      maxTeachers: 10,
-      maxClasses: 10,
-      maxStorage: 1024, // 1GB
-      features: ['basic_features'],
-    },
-    BASIC: {
-      name: 'basic',
-      maxStudents: 200,
-      maxTeachers: 30,
-      maxClasses: 25,
-      maxStorage: 5120, // 5GB
-      features: ['basic_features', 'attendance', 'grades'],
-    },
-    PREMIUM: {
-      name: 'premium',
-      maxStudents: 1000,
-      maxTeachers: 100,
-      maxClasses: 100,
-      maxStorage: 20480, // 20GB
-      features: ['basic_features', 'attendance', 'grades', 'fees', 'reports'],
-    },
-    ENTERPRISE: {
-      name: 'enterprise',
-      maxStudents: -1, // Unlimited
-      maxTeachers: -1,
-      maxClasses: -1,
-      maxStorage: -1,
-      features: ['all_features'],
-    },
-  },
-
   // ===== TOKEN EXPIRY =====
   TOKEN_EXPIRY: {
     ACCESS_TOKEN: '15m', // 15 minutes
     REFRESH_TOKEN: '7d', // 7 days
     EMAIL_VERIFICATION: '24h', // 24 hours
     PASSWORD_RESET: '1h', // 1 hour
-    INVITATION: '7d', // 7 days
   },
 
   // ===== SECURITY =====
@@ -149,17 +110,15 @@ module.exports = {
     TOKEN_EXPIRED: 'TOKEN_EXPIRED',
     TOKEN_INVALID: 'TOKEN_INVALID',
     
-    // Tenant errors
-    TENANT_NOT_FOUND: 'TENANT_NOT_FOUND',
-    TENANT_INACTIVE: 'TENANT_INACTIVE',
-    SUBSCRIPTION_EXPIRED: 'SUBSCRIPTION_EXPIRED',
-    LIMIT_REACHED: 'LIMIT_REACHED',
-    
     // Validation errors
     VALIDATION_ERROR: 'VALIDATION_ERROR',
     DUPLICATE_ENTRY: 'DUPLICATE_ENTRY',
     
     // Permission errors
     INSUFFICIENT_PERMISSIONS: 'INSUFFICIENT_PERMISSIONS',
+
+    // Resource errors
+    RESOURCE_NOT_FOUND: 'RESOURCE_NOT_FOUND',
+    RESOURCE_IN_USE: 'RESOURCE_IN_USE',
   },
 };
