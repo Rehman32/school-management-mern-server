@@ -17,7 +17,6 @@ const AuditMiddleware = require('./middlewares/audit.middleware');
 
 // Import routes (all your existing routes)
 const authRoutes = require('./routes/auth.routes');
-const tenantRoutes = require('./routes/tenant.routes');
 const dashboardRoutes = require('./routes/admindashboard.routes');
 const schoolRoutes = require('./routes/school.routes');
 const classRoutes = require('./routes/class.routes');
@@ -67,7 +66,7 @@ app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'School Management API is running',
-    version: '2.0.0',
+    version: '3.0.0',
     timestamp: new Date().toISOString(),
   });
 });
@@ -84,7 +83,6 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/tenants', tenantRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/school', schoolRoutes);
 app.use('/api/classes', classRoutes);
