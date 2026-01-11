@@ -515,3 +515,229 @@ exports.bulkDelete = async (req, res) => {
     });
   }
 };
+
+// ============================================
+// UPLOAD STUDENT PHOTO
+// ============================================
+exports.uploadPhoto = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No photo file uploaded"
+      });
+    }
+    
+    const student = await Student.findById(id);
+    if (!student || student.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+    
+    // Delete old photo if exists
+    if (student.photo) {
+      const fs = require('fs');
+      const path = require('path');
+      const oldPhotoPath = path.join(process.cwd(), student.photo);
+      if (fs.existsSync(oldPhotoPath)) {
+        fs.unlinkSync(oldPhotoPath);
+      }
+    }
+    
+    // Update photo path
+    const photoPath = `/uploads/students/photos/${req.file.filename}`;
+    student.photo = photoPath;
+    student.updatedBy = req.user?.id;
+    await student.save();
+    
+    res.json({
+      success: true,
+      data: { photo: photoPath },
+      message: "Photo uploaded successfully"
+    });
+  } catch (err) {
+    console.error("Upload photo error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to upload photo"
+    });
+  }
+};
+
+// ============================================
+// DELETE STUDENT PHOTO
+// ============================================
+exports.deletePhoto = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const student = await Student.findById(id);
+    if (!student || student.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+    
+    if (student.photo) {
+      const fs = require('fs');
+      const path = require('path');
+      const photoPath = path.join(process.cwd(), student.photo);
+      if (fs.existsSync(photoPath)) {
+        fs.unlinkSync(photoPath);
+      }
+      student.photo = null;
+      student.updatedBy = req.user?.id;
+      await student.save();
+    }
+    
+    res.json({
+      success: true,
+      message: "Photo deleted successfully"
+    });
+  } catch (err) {
+    console.error("Delete photo error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to delete photo"
+    });
+  }
+};
+
+// ============================================
+// UPLOAD STUDENT DOCUMENT
+// ============================================
+exports.uploadDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { documentType, documentName } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "No document file uploaded"
+      });
+    }
+    
+    const student = await Student.findById(id);
+    if (!student || student.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+    
+    // Add document to student's documents array
+    const document = {
+      name: documentName || req.file.originalname,
+      type: documentType || 'other',
+      url: `/uploads/students/documents/${req.file.filename}`,
+      uploadedAt: new Date(),
+      uploadedBy: req.user?.id
+    };
+    
+    if (!student.documents) {
+      student.documents = [];
+    }
+    student.documents.push(document);
+    student.updatedBy = req.user?.id;
+    await student.save();
+    
+    res.json({
+      success: true,
+      data: document,
+      message: "Document uploaded successfully"
+    });
+  } catch (err) {
+    console.error("Upload document error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to upload document"
+    });
+  }
+};
+
+// ============================================
+// DELETE STUDENT DOCUMENT
+// ============================================
+exports.deleteDocument = async (req, res) => {
+  try {
+    const { id, documentId } = req.params;
+    
+    const student = await Student.findById(id);
+    if (!student || student.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+    
+    const docIndex = student.documents?.findIndex(
+      d => d._id.toString() === documentId
+    );
+    
+    if (docIndex === -1 || docIndex === undefined) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found"
+      });
+    }
+    
+    // Delete file from disk
+    const fs = require('fs');
+    const path = require('path');
+    const docPath = path.join(process.cwd(), student.documents[docIndex].url);
+    if (fs.existsSync(docPath)) {
+      fs.unlinkSync(docPath);
+    }
+    
+    // Remove from array
+    student.documents.splice(docIndex, 1);
+    student.updatedBy = req.user?.id;
+    await student.save();
+    
+    res.json({
+      success: true,
+      message: "Document deleted successfully"
+    });
+  } catch (err) {
+    console.error("Delete document error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to delete document"
+    });
+  }
+};
+
+// ============================================
+// GET STUDENT DOCUMENTS
+// ============================================
+exports.getDocuments = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const student = await Student.findById(id).select('documents firstName lastName');
+    if (!student || student.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: student.documents || [],
+      student: `${student.firstName} ${student.lastName}`
+    });
+  } catch (err) {
+    console.error("Get documents error:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to get documents"
+    });
+  }
+};
