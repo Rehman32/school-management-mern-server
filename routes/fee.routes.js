@@ -1,6 +1,6 @@
 // ============================================
-// ENHANCED FEE ROUTES
-// Fixed and Enhanced for Real School Management
+// ENHANCED FEE ROUTES - WITH RECEIPTS/INVOICES
+// server/routes/fee.routes.js
 // ============================================
 
 const express = require("express");
@@ -21,8 +21,14 @@ router.get("/", authorize("admin", "teacher"), feeCtrl.listFees);
 // Get statistics
 router.get("/stats", authorize("admin", "teacher"), feeCtrl.getStatistics);
 
+// Get fee summary report (with filters)
+router.get("/summary-report", authorize("admin"), feeCtrl.getFeeSummaryReport);
+
 // Get student fees
-router.get("/student/:studentId", authorize("admin", "teacher", "student"), feeCtrl.getStudentFees);
+router.get("/student/:studentId", authorize("admin", "teacher"), feeCtrl.getStudentFees);
+
+// Get student payment history
+router.get("/student/:studentId/history", authorize("admin", "teacher"), feeCtrl.getPaymentHistory);
 
 // Create fee
 router.post("/", authorize("admin"), feeCtrl.createFee);
@@ -45,5 +51,15 @@ router.post("/:id/payments", authorize("admin"), feeCtrl.recordPayment);
 
 // Delete a payment record
 router.delete("/:id/payments/:paymentId", authorize("admin"), feeCtrl.deletePayment);
+
+// ============================================
+// RECEIPTS & INVOICES
+// ============================================
+
+// Generate invoice for a fee
+router.get("/:id/invoice", authorize("admin", "teacher"), feeCtrl.generateInvoice);
+
+// Generate receipt for a specific payment
+router.get("/:id/receipt/:paymentId", authorize("admin", "teacher"), feeCtrl.generateReceipt);
 
 module.exports = router;
