@@ -13,7 +13,6 @@ class Database {
       if (!mongoUri) {
         console.error('❌ MongoDB URI not found!');
         console.error('   Please set MONGO_URI or MONGODB_URI in your .env file');
-        console.error('   Example: MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/dbname');
         process.exit(1);
       }
 
