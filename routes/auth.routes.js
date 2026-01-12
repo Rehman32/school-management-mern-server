@@ -30,6 +30,18 @@ router.post(
 );
 
 /**
+ * @route   POST /api/auth/register-school
+ * @desc    Register new school with admin (onboarding)
+ * @access  Public
+ */
+router.post(
+  '/register-school',
+  RateLimitMiddleware.registerLimiter,
+  AuditMiddleware.auditAuth('register_school'),
+  AuthController.registerSchool
+);
+
+/**
  * @route   POST /api/auth/login
  * @desc    Login user
  * @access  Public

@@ -211,6 +211,30 @@ static getCurrentUser = ErrorHandler.asyncHandler(async (req, res) => {
 
     return ApiResponse.success(res, result.user, result.message);
   });
+
+  /**
+   * Register School (Onboarding)
+   * POST /api/auth/register-school
+   * Creates school + admin user atomically
+   */
+  static registerSchool = ErrorHandler.asyncHandler(async (req, res) => {
+    const result = await AuthService.registerSchool(req.body, req);
+
+    // Set refresh token in httpOnly cookie
+    res.cookie('refreshToken', result.tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return ApiResponse.created(res, {
+      school: result.school,
+      user: result.user,
+      accessToken: result.tokens.accessToken,
+      expiresIn: result.tokens.expiresIn,
+    }, result.message);
+  });
 }
 
 module.exports = AuthController;

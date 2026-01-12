@@ -1,271 +1,266 @@
 // ============================================
-// EMAIL SERVICE
-// Email notifications for verification, reset, etc.
+// EMAIL SERVICE - FLEXIBLE SMTP CONFIGURATION
+// server/services/email.service.js
 // ============================================
+// Supports: Resend, Brevo, Mailgun, Gmail, or any SMTP
 
 const nodemailer = require('nodemailer');
 
 class EmailService {
-  /**
-   * Create Email Transporter
-   */
-  static createTransporter() {
-    if (process.env.NODE_ENV === 'production') {
-      // Production SMTP
-      return nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: process.env.SMTP_PORT,
-        secure: process.env.SMTP_PORT === '465',
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-      });
-    } else {
-      // Development - Log to console
-      return {
-        sendMail: async (options) => {
-          console.log('📧 Email (Development Mode)');
-          console.log('To:', options.to);
-          console.log('Subject:', options.subject);
-          console.log('Content:', options.html || options.text);
-          return { messageId: 'dev-mode' };
-        },
-      };
-    }
+  constructor() {
+    this.transporter = null;
+    this.initialized = false;
+    this.fromEmail = process.env.EMAIL_FROM || 'noreply@school.com';
+    this.fromName = process.env.EMAIL_FROM_NAME || 'School Management System';
   }
 
-  /**
-   * Send Email
-   */
-  static async sendEmail({ to, subject, html, text }) {
+  // Initialize transporter based on env config
+  init() {
+    if (this.initialized) return;
+
+    const provider = process.env.EMAIL_PROVIDER || 'smtp';
+
     try {
-      const transporter = this.createTransporter();
+      if (provider === 'resend') {
+        // Resend (3000 emails/month free)
+        this.transporter = nodemailer.createTransport({
+          host: 'smtp.resend.com',
+          port: 465,
+          secure: true,
+          auth: {
+            user: 'resend',
+            pass: process.env.RESEND_API_KEY
+          }
+        });
+      } else if (provider === 'brevo' || provider === 'sendinblue') {
+        // Brevo/Sendinblue (300 emails/day free)
+        this.transporter = nodemailer.createTransport({
+          host: 'smtp-relay.brevo.com',
+          port: 587,
+          secure: false,
+          auth: {
+            user: process.env.BREVO_USER,
+            pass: process.env.BREVO_API_KEY
+          }
+        });
+      } else if (provider === 'mailgun') {
+        // Mailgun (1000 emails free for 3 months)
+        this.transporter = nodemailer.createTransport({
+          host: 'smtp.mailgun.org',
+          port: 587,
+          secure: false,
+          auth: {
+            user: process.env.MAILGUN_USER,
+            pass: process.env.MAILGUN_PASSWORD
+          }
+        });
+      } else if (provider === 'gmail') {
+        // Gmail (500/day with app password)
+        this.transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            user: process.env.GMAIL_USER,
+            pass: process.env.GMAIL_APP_PASSWORD
+          }
+        });
+      } else {
+        // Generic SMTP
+        this.transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: parseInt(process.env.SMTP_PORT) || 587,
+          secure: process.env.SMTP_SECURE === 'true',
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASSWORD
+          }
+        });
+      }
 
-      const mailOptions = {
-        from: `${process.env.APP_NAME || 'School Management'} <${process.env.EMAIL_FROM || 'noreply@school.com'}>`,
-        to,
-        subject,
-        html,
-        text: text || html.replace(/<[^>]*>/g, ''), // Strip HTML for text version
-      };
-
-      const info = await transporter.sendMail(mailOptions);
-      console.log('✅ Email sent:', info.messageId);
-      return info;
-    } catch (error) {
-      console.error('❌ Email send failed:', error);
-      throw error;
+      this.initialized = true;
+      console.log(`✅ Email service initialized with provider: ${provider}`);
+    } catch (err) {
+      console.warn(`⚠️ Email service not configured: ${err.message}`);
+      console.warn('   Emails will be logged to console instead.');
     }
   }
 
-  /**
-   * Send Verification Email
-   */
-  static async sendVerificationEmail(user, token) {
-    const verificationUrl = `${process.env.APP_URL}/verify-email?token=${token}`;
+  // Send email (with fallback to console)
+  async send({ to, subject, html, text }) {
+    this.init();
 
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-          .button { display: inline-block; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-          .footer { text-align: center; margin-top: 20px; color: #777; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Verify Your Email</h1>
-          </div>
-          <div class="content">
-            <p>Hi ${user.name},</p>
-            <p>Thank you for registering! Please verify your email address by clicking the button below:</p>
-            <center>
-              <a href="${verificationUrl}" class="button">Verify Email</a>
-            </center>
-            <p>Or copy and paste this link into your browser:</p>
-            <p style="word-break: break-all; color: #667eea;">${verificationUrl}</p>
-            <p>This link will expire in 24 hours.</p>
-            <p>If you didn't create an account, you can safely ignore this email.</p>
-          </div>
-          <div class="footer">
-            <p>&copy; ${new Date().getFullYear()} ${process.env.APP_NAME || 'School Management System'}. All rights reserved.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-
-    return this.sendEmail({
-      to: user.email,
-      subject: 'Verify Your Email Address',
+    const mailOptions = {
+      from: `"${this.fromName}" <${this.fromEmail}>`,
+      to,
+      subject,
       html,
-    });
+      text: text || html?.replace(/<[^>]*>/g, '')
+    };
+
+    // If no transporter, log to console
+    if (!this.transporter) {
+      console.log('\n📧 ========== EMAIL (Console Mode) ==========');
+      console.log(`To: ${to}`);
+      console.log(`Subject: ${subject}`);
+      console.log(`Body: ${text || html}`);
+      console.log('==============================================\n');
+      return { success: true, mode: 'console' };
+    }
+
+    try {
+      const info = await this.transporter.sendMail(mailOptions);
+      console.log(`📧 Email sent to ${to}: ${info.messageId}`);
+      return { success: true, messageId: info.messageId };
+    } catch (err) {
+      console.error(`❌ Email failed to ${to}:`, err.message);
+      throw err;
+    }
   }
 
-  /**
-   * Send Password Reset Email
-   */
-  static async sendPasswordResetEmail(user, token) {
-    const resetUrl = `${process.env.APP_URL}/reset-password?token=${token}`;
+  // ============================================
+  // EMAIL TEMPLATES
+  // ============================================
 
+  async sendWelcomeEmail({ to, schoolName, adminName, loginUrl }) {
+    const subject = `Welcome to ${schoolName} - Your School Management System`;
     const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-          .button { display: inline-block; padding: 12px 30px; background: #f5576c; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-          .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
-          .footer { text-align: center; margin-top: 20px; color: #777; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Password Reset Request</h1>
-          </div>
-          <div class="content">
-            <p>Hi ${user.name},</p>
-            <p>We received a request to reset your password. Click the button below to create a new password:</p>
-            <center>
-              <a href="${resetUrl}" class="button">Reset Password</a>
-            </center>
-            <p>Or copy and paste this link into your browser:</p>
-            <p style="word-break: break-all; color: #f5576c;">${resetUrl}</p>
-            <div class="warning">
-              <strong>⚠️ Security Notice:</strong>
-              <p>This link will expire in 1 hour. If you didn't request a password reset, please ignore this email or contact support if you're concerned about your account security.</p>
-            </div>
-          </div>
-          <div class="footer">
-            <p>&copy; ${new Date().getFullYear()} ${process.env.APP_NAME || 'School Management System'}. All rights reserved.</p>
-          </div>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
+          <h1 style="color: white; margin: 0;">🎓 Welcome!</h1>
         </div>
-      </body>
-      </html>
+        
+        <div style="padding: 30px; background: #f9fafb;">
+          <h2 style="color: #333;">Hello ${adminName},</h2>
+          
+          <p style="color: #666; line-height: 1.6;">
+            Your School Management System for <strong>${schoolName}</strong> has been set up successfully!
+          </p>
+          
+          <p style="color: #666; line-height: 1.6;">
+            You can now log in and start managing your school:
+          </p>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${loginUrl}" style="background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+              Login to Dashboard
+            </a>
+          </div>
+          
+          <p style="color: #999; font-size: 14px;">
+            If you didn't create this account, please ignore this email.
+          </p>
+        </div>
+        
+        <div style="background: #333; padding: 20px; text-align: center;">
+          <p style="color: #999; margin: 0; font-size: 12px;">
+            © ${new Date().getFullYear()} School Management System
+          </p>
+        </div>
+      </div>
     `;
 
-    return this.sendEmail({
-      to: user.email,
-      subject: 'Password Reset Request',
-      html,
-    });
+    return this.send({ to, subject, html });
   }
 
-  /**
-   * Send Invitation Email
-   */
-  static async sendInvitationEmail(invitation, tenant) {
-    const invitationUrl = `${process.env.APP_URL}/register?invitation=${invitation.token}`;
-
+  async sendTeacherInvitation({ to, schoolName, inviterName, inviteUrl, expiresIn }) {
+    const subject = `You're invited to join ${schoolName}`;
     const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-          .button { display: inline-block; padding: 12px 30px; background: #4facfe; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-          .info-box { background: white; border: 1px solid #ddd; padding: 15px; border-radius: 5px; margin: 20px 0; }
-          .footer { text-align: center; margin-top: 20px; color: #777; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>You're Invited!</h1>
-          </div>
-          <div class="content">
-            <p>Hello,</p>
-            <p>You have been invited to join <strong>${tenant.name}</strong> as a <strong>${invitation.role}</strong>.</p>
-            <div class="info-box">
-              <p><strong>School:</strong> ${tenant.name}</p>
-              <p><strong>Role:</strong> ${invitation.role}</p>
-              <p><strong>Invited by:</strong> ${invitation.invitedBy.name}</p>
-            </div>
-            <p>Click the button below to accept the invitation and create your account:</p>
-            <center>
-              <a href="${invitationUrl}" class="button">Accept Invitation</a>
-            </center>
-            <p>Or copy and paste this link into your browser:</p>
-            <p style="word-break: break-all; color: #4facfe;">${invitationUrl}</p>
-            <p>This invitation will expire in 7 days.</p>
-          </div>
-          <div class="footer">
-            <p>&copy; ${new Date().getFullYear()} ${process.env.APP_NAME || 'School Management System'}. All rights reserved.</p>
-          </div>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); padding: 30px; text-align: center;">
+          <h1 style="color: white; margin: 0;">👋 You're Invited!</h1>
         </div>
-      </body>
-      </html>
+        
+        <div style="padding: 30px; background: #f9fafb;">
+          <h2 style="color: #333;">Hello,</h2>
+          
+          <p style="color: #666; line-height: 1.6;">
+            <strong>${inviterName}</strong> has invited you to join <strong>${schoolName}</strong> 
+            as a teacher on the School Management System.
+          </p>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${inviteUrl}" style="background: #11998e; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+              Accept Invitation
+            </a>
+          </div>
+          
+          <p style="color: #999; font-size: 14px;">
+            This invitation expires in ${expiresIn}. If you didn't expect this invitation, please ignore this email.
+          </p>
+        </div>
+        
+        <div style="background: #333; padding: 20px; text-align: center;">
+          <p style="color: #999; margin: 0; font-size: 12px;">
+            © ${new Date().getFullYear()} School Management System
+          </p>
+        </div>
+      </div>
     `;
 
-    return this.sendEmail({
-      to: invitation.email,
-      subject: `Invitation to join ${tenant.name}`,
-      html,
-    });
+    return this.send({ to, subject, html });
   }
 
-  /**
-   * Send Welcome Email
-   */
-  static async sendWelcomeEmail(user, tenant) {
-    const loginUrl = `${process.env.APP_URL}/login`;
-
+  async sendPasswordReset({ to, name, resetUrl }) {
+    const subject = 'Reset Your Password';
     const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
-          .button { display: inline-block; padding: 12px 30px; background: #43e97b; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
-          .footer { text-align: center; margin-top: 20px; color: #777; font-size: 12px; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Welcome to ${tenant.name}! 🎉</h1>
-          </div>
-          <div class="content">
-            <p>Hi ${user.name},</p>
-            <p>Welcome aboard! Your account has been successfully created.</p>
-            <p><strong>Email:</strong> ${user.email}</p>
-            <p><strong>Role:</strong> ${user.role}</p>
-            <center>
-              <a href="${loginUrl}" class="button">Login Now</a>
-            </center>
-            <p>If you have any questions, feel free to reach out to your administrator.</p>
-          </div>
-          <div class="footer">
-            <p>&copy; ${new Date().getFullYear()} ${process.env.APP_NAME || 'School Management System'}. All rights reserved.</p>
-          </div>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 30px; text-align: center;">
+          <h1 style="color: white; margin: 0;">🔐 Password Reset</h1>
         </div>
-      </body>
-      </html>
+        
+        <div style="padding: 30px; background: #f9fafb;">
+          <h2 style="color: #333;">Hello ${name || 'User'},</h2>
+          
+          <p style="color: #666; line-height: 1.6;">
+            We received a request to reset your password. Click the button below to create a new password:
+          </p>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" style="background: #f5576c; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+              Reset Password
+            </a>
+          </div>
+          
+          <p style="color: #999; font-size: 14px;">
+            This link expires in 1 hour. If you didn't request this, please ignore this email.
+          </p>
+        </div>
+      </div>
     `;
 
-    return this.sendEmail({
-      to: user.email,
-      subject: `Welcome to ${tenant.name}!`,
-      html,
-    });
+    return this.send({ to, subject, html });
+  }
+
+  async sendEmailVerification({ to, name, verifyUrl }) {
+    const subject = 'Verify Your Email Address';
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
+          <h1 style="color: white; margin: 0;">✉️ Verify Email</h1>
+        </div>
+        
+        <div style="padding: 30px; background: #f9fafb;">
+          <h2 style="color: #333;">Hello ${name || 'User'},</h2>
+          
+          <p style="color: #666; line-height: 1.6;">
+            Please verify your email address by clicking the button below:
+          </p>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verifyUrl}" style="background: #667eea; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold;">
+              Verify Email
+            </a>
+          </div>
+          
+          <p style="color: #999; font-size: 14px;">
+            This link expires in 24 hours.
+          </p>
+        </div>
+      </div>
+    `;
+
+    return this.send({ to, subject, html });
   }
 }
 
-module.exports = EmailService;
+// Export singleton instance
+module.exports = new EmailService();

@@ -424,6 +424,153 @@ class AuthService {
       user,
     };
   }
+
+  /**
+   * Register New School with Admin User
+   * This is the main onboarding flow for new schools
+   */
+  static async registerSchool(schoolData, req) {
+    const mongoose = require('mongoose');
+    const School = require('../models/school.model');
+    const EmailService = require('./email.service');
+
+    const {
+      // School info
+      schoolName,
+      schoolEmail,
+      schoolPhone,
+      schoolAddress,
+      city,
+      state,
+      country,
+      board,
+      // Admin info
+      adminName,
+      adminEmail,
+      adminPassword,
+    } = schoolData;
+
+    // Validate required fields
+    if (!schoolName || !schoolEmail || !adminName || !adminEmail || !adminPassword) {
+      throw new ValidationError('School name, email, admin name, email and password are required');
+    }
+
+    // Check if school email already exists
+    const existingSchool = await School.findOne({ email: schoolEmail.toLowerCase() });
+    if (existingSchool) {
+      throw new ConflictError('A school with this email already exists');
+    }
+
+    // Check if admin email already exists
+    const existingUser = await User.findOne({ email: adminEmail.toLowerCase() });
+    if (existingUser) {
+      throw new ConflictError('A user with this admin email already exists');
+    }
+
+    // Validate password strength
+    const passwordValidation = EncryptionService.validatePasswordStrength(adminPassword);
+    if (!passwordValidation.isValid) {
+      throw new ValidationError('Password does not meet requirements', {
+        errors: passwordValidation.errors,
+      });
+    }
+
+    // Start a transaction
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      // Create the school
+      const school = await School.create([{
+        name: schoolName,
+        email: schoolEmail.toLowerCase(),
+        phone: schoolPhone,
+        address: schoolAddress,
+        city,
+        state,
+        country: country || 'India',
+        board: board || 'State Board',
+        status: 'active',
+        subscriptionPlan: 'free',
+        currentAcademicYear: `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`,
+      }], { session });
+
+      // Create the admin user
+      const user = await User.create([{
+        name: adminName,
+        email: adminEmail.toLowerCase(),
+        password: adminPassword, // Will be hashed by pre-save hook
+        role: ROLES.ADMIN,
+        isVerified: false,
+        isActive: true,
+      }], { session });
+
+      await session.commitTransaction();
+
+      const createdSchool = school[0];
+      const createdUser = user[0];
+
+      // Generate email verification token
+      const verificationToken = createdUser.generateEmailVerificationToken();
+      await createdUser.save();
+
+      // Generate auth tokens
+      const tokens = await TokenService.generateTokenPair(
+        createdUser,
+        req.ip,
+        req.get('user-agent')
+      );
+
+      // Send welcome email (async, don't block)
+      const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+      EmailService.sendWelcomeEmail({
+        to: adminEmail,
+        schoolName,
+        adminName,
+        loginUrl: `${clientUrl}/login`,
+      }).catch(err => console.warn('Welcome email failed:', err.message));
+
+      // Audit log
+      AuditMiddleware.logAudit({
+        userId: createdUser._id,
+        action: 'register_school',
+        resource: 'School',
+        resourceId: createdSchool._id,
+        method: 'POST',
+        endpoint: req.originalUrl,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        status: 'success',
+        severity: 'high',
+        details: { schoolName, adminEmail },
+      });
+
+      return {
+        school: {
+          id: createdSchool._id,
+          name: createdSchool.name,
+          email: createdSchool.email,
+          status: createdSchool.status,
+        },
+        user: {
+          id: createdUser._id,
+          name: createdUser.name,
+          email: createdUser.email,
+          role: createdUser.role,
+          isVerified: createdUser.isVerified,
+        },
+        tokens,
+        verificationToken,
+        message: 'School registered successfully! Welcome email sent.',
+      };
+
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
+    }
+  }
 }
 
 module.exports = AuthService;

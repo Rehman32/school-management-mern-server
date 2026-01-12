@@ -28,6 +28,7 @@ const attendanceRoutes = require('./routes/attendance.routes');
 const feeRoutes = require('./routes/fee.routes');
 const examRoutes = require('./routes/exam.routes');
 const timetableRoutes = require('./routes/timetable.routes');
+const invitationRoutes = require('./routes/invitation.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -94,6 +95,7 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/fees', feeRoutes);
 app.use('/api/exams', examRoutes);
 app.use('/api/timetable', timetableRoutes);
+app.use('/api/invitations', invitationRoutes);
 
 // OLD ROUTES (Backward compatibility)
 const { protect } = require('./middlewares/auth.middleware');
