@@ -18,7 +18,14 @@ class AuthController {
 
     // Send verification email (don't wait for it)
     if (result.verificationToken) {
-      EmailService.sendVerificationEmail(result.user, result.verificationToken).catch((err) =>
+      const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+      const verifyUrl = `${clientUrl}/verify-email?token=${result.verificationToken}`;
+      
+      EmailService.sendEmailVerification({
+        to: result.user.email,
+        name: result.user.name,
+        verifyUrl
+      }).catch((err) =>
         console.error('Failed to send verification email:', err)
       );
     }
