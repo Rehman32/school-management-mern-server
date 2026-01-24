@@ -301,6 +301,38 @@ export const listByClass = async (req, res) => {
   }
 };
 
+// LIST BY TEACHER - Get all timetable entries for a specific teacher
+export const listByTeacher = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    
+    if (!teacherId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Teacher ID is required" 
+      });
+    }
+    
+    const entries = await Timetable.find({ teacherId })
+      .populate("subjectId", "name code")
+      .populate("classId", "grade section name")
+      .sort({ day: 1, period: 1 });
+    
+    return res.json({ 
+      success: true, 
+      data: entries,
+      count: entries.length 
+    });
+    
+  } catch (err) {
+    console.error("List teacher timetable error:", err);
+    res.status(500).json({ 
+      success: false, 
+      message: err.message || "Server error" 
+    });
+  }
+};
+
 // DELETE ENTRY
 export const deleteEntry = async (req, res) => {
   try {

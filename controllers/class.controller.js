@@ -206,8 +206,12 @@ exports.updateClass = async (req, res) => {
     }
 
     // Validate class teacher if changed
-    if (req.body.classTeacher && req.body.classTeacher !== existing.classTeacher?.toString()) {
-      if (req.body.classTeacher.trim() !== '') {
+    if (req.body.classTeacher !== undefined) {
+      if (req.body.classTeacher === '' || req.body.classTeacher === null) {
+        // Clear class teacher
+        req.body.classTeacher = null;
+      } else if (req.body.classTeacher !== existing.classTeacher?.toString()) {
+        // Validate new teacher
         const teacher = await Teacher.findOne({
           _id: req.body.classTeacher,
           isDeleted: false,

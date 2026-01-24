@@ -7,7 +7,9 @@ router.use(protect);
 
 router.post("/", authorize("admin"), ctrl.createEntry);
 router.get("/class/:classId", authorize("admin", "teacher"), ctrl.listByClass);
-router.put("/:id", authorize("admin"), ctrl.updateEntry); // ✅ FIXED: Uncommented
+router.get("/teacher/:teacherId", authorize("admin", "teacher"), ctrl.listByTeacher);
+router.put("/:id", authorize("admin"), ctrl.updateEntry);
 router.delete("/:id", authorize("admin"), ctrl.deleteEntry);
 
 module.exports = router;
+
