@@ -9,7 +9,6 @@ services:
     plan: free
     
     # Build Configuration
-    rootDir: server
     buildCommand: npm install
     startCommand: npm start
     
