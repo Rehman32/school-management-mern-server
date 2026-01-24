@@ -1,5 +1,5 @@
 // ============================================
-// SECURITY CONFIGURATION (WORKING VERSION)
+// SECURITY CONFIGURATION (PRODUCTION READY)
 // ============================================
 
 const helmet = require('helmet');
@@ -8,11 +8,25 @@ const { RATE_LIMIT } = require('../utils/constants');
 
 class SecurityConfig {
   /**
-   * CORS Configuration
+   * CORS Configuration - Supports multiple origins for production
    */
   static getCorsOptions() {
+    const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+      .split(',')
+      .map(origin => origin.trim());
+
     return {
-      origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+      origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, curl, etc)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+          callback(null, true);
+        } else {
+          console.warn(`CORS blocked origin: ${origin}`);
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-ID'],
