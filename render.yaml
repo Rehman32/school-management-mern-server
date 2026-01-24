@@ -1,0 +1,40 @@
+# Render.com Deployment Configuration
+# https://render.com/docs/yaml-spec
+
+services:
+  - type: web
+    name: school-management-api
+    runtime: node
+    region: oregon
+    plan: free
+    
+    # Build Configuration
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    
+    # Health Check
+    healthCheckPath: /health
+    
+    # Environment Variables (set in Render Dashboard for security)
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false # Set manually in dashboard
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_NAME
+        value: School Management System
