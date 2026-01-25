@@ -10,7 +10,7 @@ services:
     
     # Build Configuration
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node server.js
     
     # Health Check
     healthCheckPath: /health
@@ -19,7 +19,7 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: MONGODB_URI
+      - key: MONGO_URI
         sync: false # Set manually in dashboard
       - key: JWT_SECRET
         sync: false
