@@ -11,19 +11,26 @@ class SecurityConfig {
    * CORS Configuration - Supports multiple origins for production
    */
   static getCorsOptions() {
+    // Parse and clean allowed origins (remove trailing slashes)
     const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
       .split(',')
-      .map(origin => origin.trim());
+      .map(origin => origin.trim().replace(/\/$/, '')); // Remove trailing slashes
+
+    console.log('✅ CORS Allowed Origins:', allowedOrigins);
 
     return {
       origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, etc)
+        // Allow requests with no origin (mobile apps, curl, Postman, etc)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        // Clean incoming origin (remove trailing slash for comparison)
+        const cleanOrigin = origin.replace(/\/$/, '');
+        
+        if (allowedOrigins.includes(cleanOrigin) || allowedOrigins.includes('*')) {
           callback(null, true);
         } else {
-          console.warn(`CORS blocked origin: ${origin}`);
+          console.warn(`❌ CORS blocked origin: ${origin} (cleaned: ${cleanOrigin})`);
+          console.warn(`   Allowed origins: ${allowedOrigins.join(', ')}`);
           callback(new Error('Not allowed by CORS'));
         }
       },
